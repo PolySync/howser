@@ -35,35 +35,60 @@ sensible README files and consistently formatted requirements documentation.
 
 ### Building
 
-`cargo build`
-
-`cargo install`
+```Shell
+~/howser$ cargo build
+~/howser$ cargo install
+```
 
 ## Usage
 
 `howser [FLAGS] [SUBCOMMAND]`
 
-***Flags***
+### Flags
 
-* `-h, --help` Prints help information
-* `-V, --version` Prints version information
-* `-v, --verbose` Uses verbose (multi-line) output for errors and warnings.
+`-h, --help` Prints help information.
 
-***Subcommands***
+`-V, --version` Prints version information.
 
-* `check <Filename>` Checks that a document intended for use as a prescription conforms to the Rx spec.  
-* `validate <Prescription> <Document>` Perform validation of a Markdown document against an Rx prescription file.
-* `help <Subcommand>` Print out help information on a subcommand.
+`-v, --verbose` Uses verbose (multi-line) output for errors and warnings.
+
+### Subcommands
+
+`check <Filename>` Checks that a document intended for use as a prescription conforms to the Rx spec.  
+
+`validate <Prescription> <Document>` Perform validation of a Markdown document against an Rx prescription file.
+
+`help <Subcommand>` Print out help information on a subcommand.
 
 ### Examples
 
-`howser check template.rx`.
+Checking valid and invalid prescription files from the examples directory.  
 
-> Checks the file named `template.rx` for conformance to the Rx spec.
+```Shell
+~/howser$ howser check examples/template.rx
+Valid Rx!
+```
 
-`howser validate template.rx document.md`
+```Shell
+~/howser$ howser check examples/bad_template.rx
+SpecWarning :: examples/bad_template.rx line 1 :: An element with a Ditto prompt must be preceded by an element of the same type.
 
-> Validates the contents of `document.md` against the prescription file `template.rx`.
+Invalid Rx
+```
+
+Validating conforming and non-conforming markdown files against the prescription file `wizard.rx` from the examples directory.
+
+```Shell
+~/howser$ howser validate examples/wizard.rx examples/wizard.md
+Rx Filled!
+```
+
+```Shell
+~/howser$ howser validate examples/wizard.rx examples/not_the_wizard.md
+Document Error :: examples/wizard.rx line 1, examples/not_the_wizard.md line 1 :: Missing mandatory node.
+
+Rx Rejected!
+```
 
 ## Tests
 
@@ -73,7 +98,9 @@ arbitrarily generated validation scenarios.
 
 ### Running Tests
 
-`cargo test`
+```Shell
+~/howser$ cargo test
+```
 
 # License
 
