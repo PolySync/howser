@@ -1,0 +1,157 @@
+//! Various data types relating to `Document`s, `Template`s, and `Node`s.
+
+use constants::{MANDATORY_PROMPT, OPTIONAL_PROMPT};
+use doogie::constants::NodeType;
+use doogie::Node;
+use errors::{HowserError, HowserResult};
+
+/// Element-Level match types for `Node`s.
+#[derive(PartialEq, Clone, Debug)]
+pub enum MatchType {
+    None,
+    Mandatory,
+    Optional,
+    Repeatable,
+}
+
+/// Supplementary metadata associated with individual `Node`s.
+pub struct NodeData {
+    pub match_type: MatchType,
+    pub comment: Option<String>,
+    pub is_wildcard: bool,
+}
+
+impl NodeData {
+    pub fn new() -> NodeData {
+        NodeData {
+            /// The `MatchType` of this `Node`.
+            match_type: MatchType::Mandatory,
+            /// Inline HTML comments are stripped from `Node`s and their contents stored.
+            comment: None,
+            /// A wildcard `Node` will match any internal content.
+            is_wildcard: false,
+        }
+    }
+}
+
+/// Represents a templated prompt for content.
+#[derive(PartialEq, Debug, Clone)]
+pub enum PromptToken {
+    None,
+    /// `-!!-` Some arbitrary content must appear here.
+    Mandatory,
+    /// `-??-` Some arbitrary content may appear here.
+    Optional,
+    /// The supplied textual content must appear verbatim.
+    Literal(String),
+}
+
+impl PromptToken {
+    pub fn to_string(&self) -> String {
+        match self {
+            &PromptToken::None => String::new(),
+            &PromptToken::Mandatory => MANDATORY_PROMPT.to_string(),
+            &PromptToken::Optional => OPTIONAL_PROMPT.to_string(),
+            &PromptToken::Literal(ref content) => content.to_string(),
+        }
+    }
+}
+
+/// Abstraction of an inline HTML comment.
+#[derive(Debug)]
+pub struct Comment(pub String);
+impl Comment {
+    /// Returns the comment in HTML markup form.
+    pub fn to_string(&self) -> String {
+        format!("<!-- {} -->", self.0)
+    }
+
+    /// Returns the inner text of the comment.
+    pub fn content(&self) -> String {
+        format!("{}", self.0)
+    }
+}
+
+/// Represents a pairing of template prompt and document content.
+#[derive(Debug)]
+pub struct ContentMatchPair(pub PromptToken, pub Option<String>);
+
+impl ContentMatchPair {
+    /// Determines if this instance represents a valid match of prompt and content.
+    pub fn is_match(pair: &Self) -> bool {
+        match pair {
+            &ContentMatchPair(PromptToken::None, Some(_)) => false,
+            &ContentMatchPair(PromptToken::Mandatory, None) => false,
+            &ContentMatchPair(PromptToken::Literal(_), None) => false,
+            &ContentMatchPair(PromptToken::Literal(ref prompt), Some(ref content)) => {
+                prompt == content
+            }
+            _ => true,
+        }
+    }
+
+    /// Determines if there is an invalid match within a vector of `ContentMatchPair`.
+    pub fn contains_mismatch(pairs: &Vec<ContentMatchPair>) -> bool {
+        for pair in pairs {
+            if !ContentMatchPair::is_match(&pair) {
+                return true;
+            }
+        }
+
+        false
+    }
+}
+
+pub enum ElementType {
+    ContainerBlock,
+    LeafBlock,
+    InlineContainer,
+    InlineLeaf,
+}
+
+impl ElementType {
+    pub fn determine(node: &Node) -> HowserResult<Self> {
+        let getter = node.capabilities
+            .get
+            .as_ref()
+            .ok_or(HowserError::CapabilityError)?;
+        match getter.get_type()? {
+            NodeType::CMarkNodeDocument
+            | NodeType::CMarkNodeList
+            | NodeType::CMarkNodeBlockQuote
+            | NodeType::CMarkNodeItem => Ok(ElementType::ContainerBlock),
+            NodeType::CMarkNodeParagraph
+            | NodeType::CMarkNodeHeading
+            | NodeType::CMarkNodeCodeBlock
+            | NodeType::CMarkNodeThematicBreak
+            | NodeType::CMarkNodeHtmlBlock
+            | NodeType::CMarkNodeCustomBlock => Ok(ElementType::LeafBlock),
+            NodeType::CMarkNodeEmph
+            | NodeType::CMarkNodeStrong
+            | NodeType::CMarkNodeLink
+            | NodeType::CMarkNodeImage => Ok(ElementType::InlineContainer),
+            NodeType::CMarkNodeText
+            | NodeType::CMarkNodeSoftbreak
+            | NodeType::CMarkNodeLinebreak
+            | NodeType::CMarkNodeCode
+            | NodeType::CMarkNodeHtmlInline
+            | NodeType::CMarkNodeCustomInline => Ok(ElementType::InlineLeaf),
+            NodeType::CMarkNodeNone => Err(HowserError::RuntimeError(
+                "CMarkNodeNone does not have an element type.".to_string(),
+            )),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use helpers::test::strategies::content;
+    use data::ContentMatchPair;
+
+    proptest!{
+        #[test]
+        fn test_match_pair(ref pair in content::matches::arb_content_match(1..10)) {
+            assert!(ContentMatchPair::is_match(pair));
+        }
+    }
+}
