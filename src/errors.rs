@@ -52,8 +52,8 @@ impl error::Error for HowserError {
 }
 
 impl fmt::Display for HowserError {
-    fn fmt(&self, _f: &mut fmt::Formatter) -> fmt::Result {
-        unimplemented!()
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self)
     }
 }
 
@@ -204,11 +204,13 @@ impl Reportable for SpecWarning {
     }
 
     fn long_msg(&self) -> String {
-        unimplemented!()
+        // Todo -- implement verbose message format.
+        self.short_msg()
     }
 
     fn code(&self) -> u32 {
-        unimplemented!()
+        // Todo -- contextual error codes.
+        1
     }
 }
 
@@ -261,8 +263,7 @@ impl DocumentError {
             .as_ref()
             .unwrap_or(&String::new())
             .to_string();
-        let rx_file = rx
-            .document
+        let rx_file = rx.document
             .filename
             .as_ref()
             .unwrap_or(&String::new())
@@ -315,10 +316,7 @@ impl Reportable for DocumentError {
             ShellText::Underlined(Box::new(ShellText::Literal(self.rx_file.to_owned())))
                 .to_string(),
         ];
-        snippet_lines.append(&mut cli::as_code_lines(
-            &self.rx_snippet,
-            self.rx_line,
-        ));
+        snippet_lines.append(&mut cli::as_code_lines(&self.rx_snippet, self.rx_line));
         message_lines.append(&mut cli::indented_lines(&snippet_lines, 4));
 
         message_lines.push(String::new());
@@ -389,8 +387,7 @@ impl ContentError {
             .as_ref()
             .unwrap_or(&String::new())
             .to_string();
-        let rx_file = rx
-            .document
+        let rx_file = rx.document
             .filename
             .as_ref()
             .unwrap_or(&String::new())
@@ -471,11 +468,13 @@ impl Reportable for ContentError {
     }
 
     fn long_msg(&self) -> String {
-        unimplemented!()
+        // Todo -- Implement verbose message format.
+        self.short_msg()
     }
 
     fn code(&self) -> u32 {
-        unimplemented!()
+        // Todo -- contextual error codes.
+        1
     }
 }
 
@@ -524,8 +523,7 @@ impl LinkError {
             .as_ref()
             .unwrap_or(&String::new())
             .to_string();
-        let rx_file = rx
-            .document
+        let rx_file = rx.document
             .filename
             .as_ref()
             .unwrap_or(&String::new())
@@ -561,10 +559,12 @@ impl Reportable for LinkError {
     }
 
     fn long_msg(&self) -> String {
-        unimplemented!()
+        // Todo -- implement verbose message format.
+        self.short_msg()
     }
 
     fn code(&self) -> u32 {
-        unimplemented!()
+        // Todo -- Contextual error codes
+        1
     }
 }

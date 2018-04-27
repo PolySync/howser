@@ -145,10 +145,7 @@ impl SpecChecker {
             if let Some(more_problems) = self.rules.check(&current_node, rx)?.as_mut() {
                 problems.append(more_problems)
             }
-            if let Some(more_problems) = self
-                .check_level(traverser.first_child()?, rx)?
-                .as_mut()
-            {
+            if let Some(more_problems) = self.check_level(traverser.first_child()?, rx)?.as_mut() {
                 problems.append(more_problems)
             }
 

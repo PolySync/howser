@@ -73,7 +73,7 @@ impl Comment {
 }
 
 /// Represents a pairing of template prompt and document content.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ContentMatchPair(pub PromptToken, pub Option<String>);
 
 impl ContentMatchPair {

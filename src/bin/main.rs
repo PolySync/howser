@@ -107,8 +107,7 @@ fn validate(args: &ArgMatches) -> HowserResult<ValidationReport> {
         if let Some(document_name) = document_name {
             let rx_root = parse_document(&get_file_contents(rx_name)?);
             let doc_root = parse_document(&get_file_contents(document_name)?);
-            let rx =
-                Document::new(&rx_root, Some(rx_name.to_string())).into_prescription()?;
+            let rx = Document::new(&rx_root, Some(rx_name.to_string())).into_prescription()?;
             let document = Document::new(&doc_root, Some(document_name.to_string()));
             Validator::new(rx, document).validate()
         } else {

@@ -7,8 +7,8 @@ extern crate unicode_segmentation;
 use self::regex::Regex;
 use std::collections::VecDeque;
 use document::{Document, Prescription};
-use errors::{ContentError, HowserError, HowserResult, Reportable, ValidationProblems,
-             ValidationReport};
+use errors::{ContentError, DocumentError, HowserError, HowserResult, Reportable, SpecWarning,
+             ValidationProblems, ValidationReport};
 use data::{ContentMatchPair, MatchType, PromptToken};
 use constants::{CONTENT_PROMPT_PATTERN, MANDATORY_PROMPT, OPTIONAL_PROMPT};
 use data::ElementType;
@@ -50,15 +50,16 @@ pub struct Validator<'a> {
 
 impl<'a> Validator<'a> {
     pub fn new(prescription: Prescription<'a>, document: Document<'a>) -> Self {
-        Validator { prescription: prescription, document }
+        Validator {
+            prescription: prescription,
+            document,
+        }
     }
 
     /// Returns the results of validating the document against the prescription.
     pub fn validate(&self) -> HowserResult<ValidationReport> {
         match self.validate_sibling_blocks(&self.prescription.document.root, &self.document.root)? {
-            Some(errors) => {
-                Ok(ValidationReport::new(Some(errors), None))
-            },
+            Some(errors) => Ok(ValidationReport::new(Some(errors), None)),
             None => Ok(ValidationReport::new(None, None)),
         }
     }
@@ -104,7 +105,7 @@ impl<'a> Validator<'a> {
         let mut current_bookmark = parent_node_traverser.last_child()?;
 
         while let Some(rx) = current_rx {
-            match self.consume_block_match(rx, current_node, current_bookmark)? {
+            match self.consume_block_match(rx, current_node, current_bookmark, parent_doc_node)? {
                 MatchResult::State(state) => {
                     let MatchState {
                         rx,
@@ -124,33 +125,52 @@ impl<'a> Validator<'a> {
             }
         }
 
-        if current_node.is_some() {
+        if let Some(extra_node) = current_node {
             debug!("validate_sibling_blocks -- Superfluous Nodes");
-            Ok(Some(Vec::new())) // todo -- fill in superfluous node error
+            let error = DocumentError::new(
+                &extra_node,
+                parent_rx_node,
+                &self.document,
+                &self.prescription,
+                "Superfluous Nodes were present.".to_string(),
+            )?;
+            Ok(Some(vec![Box::new(error)]))
         } else {
             Ok(None)
         }
     }
 
+    /// Performs validation on a block element and returns an updated MatchState if successful.
     fn consume_block_match(
         &self,
         rx: Node,
         node: Option<Node>,
         bookmark: Option<Node>,
+        parent_node: &Node,
     ) -> HowserResult<MatchResult> {
         match self.prescription.document.get_match_type(&rx)? {
             MatchType::Repeatable => {
                 debug!("consume_block_match -- Consuming Repeatable");
-                self.consume_repeatable_matches(rx, node, bookmark)
+                self.consume_repeatable_matches(rx, node, bookmark, parent_node)
             }
             MatchType::Mandatory => {
-                debug!("consume_block_match -- Consuming Mandatory Rx: {:?}, Node: {:?}, Bookmark: {:?}", rx, node, bookmark);
+                debug!("consume_block_match -- Consuming Mandatory");
 
                 if let Some(bookmark) = bookmark {
-                    self.consume_mandatory_block_match(MandatoryMatchInput { rx, node, bookmark })
+                    self.consume_mandatory_block_match(
+                        MandatoryMatchInput { rx, node, bookmark },
+                        parent_node,
+                    )
                 } else {
                     debug!("consume_block_match -- Missing mandatory node -- no bookmark");
-                    Ok(MatchResult::Error(Vec::new())) // Todo -- fill with missing mandatory error
+                    let error = DocumentError::new(
+                        parent_node,
+                        &rx,
+                        &self.document,
+                        &self.prescription,
+                        "Missing mandatory node.".to_string(),
+                    )?;
+                    Ok(MatchResult::Error(vec![Box::new(error)]))
                 }
             }
             MatchType::Optional => {
@@ -177,6 +197,7 @@ impl<'a> Validator<'a> {
         rx: Node,
         node: Option<Node>,
         bookmark: Option<Node>,
+        parent_node: &Node,
     ) -> HowserResult<MatchResult> {
         let ditto_traverser = rx.capabilities
             .traverse
@@ -206,7 +227,12 @@ impl<'a> Validator<'a> {
                     .ok_or(HowserError::CapabilityError)?
                     .itself()?;
 
-                match self.consume_block_match(current_rx, current_node, next_bookmark)? {
+                match self.consume_block_match(
+                    current_rx,
+                    current_node,
+                    next_bookmark,
+                    parent_node,
+                )? {
                     MatchResult::State(state) => {
                         let MatchState {
                             rx: _,
@@ -245,8 +271,14 @@ impl<'a> Validator<'a> {
             match (match_count, match_type) {
                 (0, MatchType::Mandatory) => {
                     debug!("consume_repeatable_matches -- Missing mandatory node");
-                    // Missing mandatory node
-                    Ok(MatchResult::Error(Vec::new())) // Todo -- fill in with missing mandatory node error
+                    let error = DocumentError::new(
+                        parent_node,
+                        &rx,
+                        &self.document,
+                        &self.prescription,
+                        "Missing mandatory node.".to_string(),
+                    )?;
+                    Ok(MatchResult::Error(vec![Box::new(error)]))
                 }
                 _ => Ok(MatchResult::State(MatchState {
                     rx: repeatable_rx
@@ -260,14 +292,17 @@ impl<'a> Validator<'a> {
                 })),
             }
         } else {
-            debug!("consume_repeatable_matches -- Rx Error");
-            Ok(MatchResult::Error(Vec::new())) // Todo -- fill this with rx error
+            debug!("consume_repeatable_matches -- Rx Error -- No subject of ditto token");
+            let error =
+                SpecWarning::new(&rx, &self.prescription, "No valid subject for ditto token.")?;
+            Ok(MatchResult::Error(vec![Box::new(error)]))
         }
     }
 
     fn consume_mandatory_block_match(
         &self,
         input: MandatoryMatchInput,
+        parent_node: &Node,
     ) -> HowserResult<MatchResult> {
         let MandatoryMatchInput { rx, node, bookmark } = input;
 
@@ -280,13 +315,12 @@ impl<'a> Validator<'a> {
                     .ok_or(HowserError::CapabilityError)?
                     .itself()?);
                 let next_bookmark = match self.scan_for_match(&bookmark, &end_node, &rx)? {
-                    Some(node) => node
-                        .capabilities
+                    Some(node) => node.capabilities
                         .traverse
                         .as_ref()
                         .ok_or(HowserError::CapabilityError)?
                         .prev_sibling()?,
-                    _ => None
+                    _ => None,
                 };
                 let next_node = node.capabilities
                     .traverse
@@ -332,7 +366,14 @@ impl<'a> Validator<'a> {
                 } else {
                     // No previously matched nodes match the current rx either. Validation fails.
                     debug!("consume_mandatory_block_match -- Nodes do not match");
-                    Ok(MatchResult::Error(Vec::new())) // Todo -- fill with missing mandatory node error
+                    let error = DocumentError::new(
+                        parent_node,
+                        &rx,
+                        &self.document,
+                        &self.prescription,
+                        "Missing mandatory node.".to_string(),
+                    )?;
+                    Ok(MatchResult::Error(vec![Box::new(error)]))
                 }
             }
         } else {
@@ -360,7 +401,14 @@ impl<'a> Validator<'a> {
             } else {
                 // No previously matched nodes match the current rx either. Validation fails.
                 debug!("consume_mandatory_block_match -- Nodes do not match");
-                Ok(MatchResult::Error(Vec::new())) // Todo -- fill with missing mandatory node error
+                let error = DocumentError::new(
+                    parent_node,
+                    &rx,
+                    &self.document,
+                    &self.prescription,
+                    "Missing mandatory node.".to_string(),
+                )?;
+                Ok(MatchResult::Error(vec![Box::new(error)]))
             }
         }
     }
@@ -541,11 +589,25 @@ impl<'a> Validator<'a> {
                         .next_sibling()?;
                 } else {
                     debug!("validate_sibling_inlines --  Inline match failed");
-                    return Ok(Some(Vec::new())); // Todo -- fill with missing node error
+                    let error = DocumentError::new(
+                        &node,
+                        &rx,
+                        &self.document,
+                        &self.prescription,
+                        "Missing inline node.".to_string(),
+                    )?;
+                    return Ok(Some(vec![Box::new(error)]));
                 }
             } else {
                 debug!("validate_sibling_inlines --  Missing node");
-                return Ok(Some(Vec::new())); // Todo -- fill with missing node error
+                let error = DocumentError::new(
+                    &parent_node,
+                    &rx,
+                    &self.document,
+                    &self.prescription,
+                    "Missing inline node.".to_string(),
+                )?;
+                return Ok(Some(vec![Box::new(error)]));
             }
         }
 
@@ -626,12 +688,16 @@ impl<'a> Validator<'a> {
             .as_ref()
             .ok_or(HowserError::CapabilityError)?;
         match rx_getter.get_type()? {
-            NodeType::CMarkNodeLink => Self::validate_link_node_content(node, rx),
+            NodeType::CMarkNodeLink => self.validate_link_node_content(node, rx),
             _ => self.validate_general_node_content(node, rx),
         }
     }
 
-    fn validate_link_node_content(node: &Node, rx: &Node) -> HowserResult<ValidationProblems> {
+    fn validate_link_node_content(
+        &self,
+        node: &Node,
+        rx: &Node,
+    ) -> HowserResult<ValidationProblems> {
         // Todo -- add validation for link content
         let node_getter = node.capabilities
             .get
@@ -658,7 +724,14 @@ impl<'a> Validator<'a> {
             || ContentMatchPair::contains_mismatch(&title_match_pairs)
             || ContentMatchPair::contains_mismatch(&content_match_pairs)
         {
-            return Ok(Some(Vec::new())); // Todo -- fill in with link error
+            let error = ContentError::new(
+                rx,
+                node,
+                &self.prescription,
+                &self.document,
+                content_match_pairs.clone(),
+            )?;
+            return Ok(Some(vec![Box::new(error)]));
         }
 
         Ok(None)
@@ -851,10 +924,8 @@ impl<'a> Validator<'a> {
 
 #[cfg(test)]
 mod tests {
-    use doogie::constants::NodeType;
     use doogie::parse_document;
     use helpers::test::strategies::content;
-    use helpers::test::strategies::cmark;
     use helpers::test::strategies::helpers::*;
     use data::ContentMatchPair;
     use document::Document;
@@ -1002,7 +1073,9 @@ mod tests {
         let second_rx_root = parse_document(&"-??-".to_string());
         let match_root = parse_document(&"Literally any content here".to_string());
         let empty_match_root = parse_document(&String::new());
-        let rx_1 = Document::new(&first_rx_root, None).into_prescription().unwrap();
+        let rx_1 = Document::new(&first_rx_root, None)
+            .into_prescription()
+            .unwrap();
         let rx_2 = Document::new(&second_rx_root, None)
             .into_prescription()
             .unwrap();
@@ -1101,7 +1174,9 @@ mod tests {
         let first_match_root = parse_document(&first_match_text.to_string());
         let second_match_root = parse_document(&second_match_text.to_string());
 
-        let first_rx = Document::new(&first_rx_root, None).into_prescription().unwrap();
+        let first_rx = Document::new(&first_rx_root, None)
+            .into_prescription()
+            .unwrap();
         let second_rx = Document::new(&second_rx_root, None)
             .into_prescription()
             .unwrap();
@@ -1131,7 +1206,9 @@ mod tests {
         let doc_root = parse_document(&match_text.to_string());
         let empty_root = parse_document(&String::new());
 
-        let first_rx = Document::new(&first_rx_root, None).into_prescription().unwrap();
+        let first_rx = Document::new(&first_rx_root, None)
+            .into_prescription()
+            .unwrap();
         let second_rx = Document::new(&second_rx_root, None)
             .into_prescription()
             .unwrap();
@@ -1152,69 +1229,40 @@ mod tests {
     }
 
     proptest! {
-            #[test]
-            /// Tests that some textual content containing Rx tokens is correctly parsed into prompts and literals.
-            fn test_tokenize_prompts(ref prompt_seq in content::prompts::prompt_tokens(1..10)) {
-                let mut prompt_string = String::new();
+        #[test]
+        /// Tests that some textual content containing Rx tokens is correctly parsed into prompts and literals.
+        fn test_tokenize_prompts(ref prompt_seq in content::prompts::prompt_tokens(1..10)) {
+            let mut prompt_string = String::new();
 
-                for prompt in prompt_seq {
-                    prompt_string.push_str(&prompt.to_string());
-                }
-
-                let tokens = Validator::tokenize_prompts(&prompt_string).unwrap();
-                assert_eq!(&tokens, prompt_seq)
+            for prompt in prompt_seq {
+                prompt_string.push_str(&prompt.to_string());
             }
 
-            #[test]
-            fn test_content_matches(
-                ref matches in content::matches::arb_content_matches(1..10, 1..10)
-            ) {
-                let (template, document) = serialize_match_seq(matches);
-
-                let match_pairs = Validator::match_contents(&document, &template).unwrap();
-
-                assert!(! ContentMatchPair::contains_mismatch(&match_pairs));
-            }
-
-            #[test]
-            fn test_non_matching_content(ref mismatch in content::mismatches::mismatch_pair()) {
-                let &(ref prompts, ref content) = mismatch;
-                let template = prompts.iter().fold(String::new(), |state, item| {
-                    state + item
-                });
-
-                let match_pairs = Validator::match_contents(&template, content).unwrap();
-
-                assert!(ContentMatchPair::contains_mismatch(&match_pairs));
-            }
-
-            #[test]
-            fn test_link_node_validation(ref link in cmark::arb_link_match()) {
-                let &(ref template_content, ref document_content) = link;
-                let template_root = parse_document(&template_content);
-                let document_root = parse_document(&document_content);
-
-                let template = Document::new(&template_root, None).into_prescription().unwrap();
-                let document = Document::new(&document_root, None);
-
-                let template_link = template
-                    .document
-                    .first_of_type(NodeType::CMarkNodeLink)
-                    .unwrap()
-                    .expect("Link node not found in template.");
-
-                let document_link = document
-                    .first_of_type(NodeType::CMarkNodeLink)
-                    .unwrap().expect("Link node not found in document");
-
-                if let Some(errors) =
-                    Validator::validate_link_node_content(&document_link, &template_link)? {
-                    for error in errors {
-                        println!("Error: {}", error.short_msg());
-                    }
-
-                    assert!(false, "Link was not valid");
-                }
-            }
+            let tokens = Validator::tokenize_prompts(&prompt_string).unwrap();
+            assert_eq!(&tokens, prompt_seq)
         }
+
+        #[test]
+        fn test_content_matches(
+            ref matches in content::matches::arb_content_matches(1..10, 1..10)
+        ) {
+            let (template, document) = serialize_match_seq(matches);
+
+            let match_pairs = Validator::match_contents(&document, &template).unwrap();
+
+            assert!(! ContentMatchPair::contains_mismatch(&match_pairs));
+        }
+
+        #[test]
+        fn test_non_matching_content(ref mismatch in content::mismatches::mismatch_pair()) {
+            let &(ref prompts, ref content) = mismatch;
+            let template = prompts.iter().fold(String::new(), |state, item| {
+                state + item
+            });
+
+            let match_pairs = Validator::match_contents(&template, content).unwrap();
+
+            assert!(ContentMatchPair::contains_mismatch(&match_pairs));
+        }
+    }
 }
