@@ -36,8 +36,8 @@ sensible README files and consistently formatted requirements documentation.
 ### Building
 
 ```Shell
-~/howser$ cargo build
-~/howser$ cargo install
+$ cargo build
+$ cargo install
 ```
 
 ## Usage
@@ -65,12 +65,12 @@ sensible README files and consistently formatted requirements documentation.
 Checking valid and invalid prescription files from the examples directory.  
 
 ```Shell
-~/howser$ howser check examples/template.rx
+$ howser check examples/template.rx
 Valid Rx!
 ```
 
 ```Shell
-~/howser$ howser check examples/bad_template.rx
+$ howser check examples/bad_template.rx
 SpecWarning :: examples/bad_template.rx line 1 :: An element with a Ditto prompt must be preceded by an element of the same type.
 
 Invalid Rx
@@ -79,12 +79,12 @@ Invalid Rx
 Validating conforming and non-conforming markdown files against the prescription file `wizard.rx` from the examples directory.
 
 ```Shell
-~/howser$ howser validate examples/wizard.rx examples/wizard.md
+$ howser validate examples/wizard.rx examples/wizard.md
 Rx Filled!
 ```
 
 ```Shell
-~/howser$ howser validate examples/wizard.rx examples/not_the_wizard.md
+$ howser validate examples/wizard.rx examples/not_the_wizard.md
 Document Error :: examples/wizard.rx line 1, examples/not_the_wizard.md line 1 :: Missing mandatory node.
 
 Rx Rejected!
@@ -99,7 +99,7 @@ arbitrarily generated validation scenarios.
 ### Running Tests
 
 ```Shell
-~/howser$ cargo test
+$ cargo test
 ```
 
 # License
