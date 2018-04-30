@@ -4,6 +4,7 @@ use constants::{MANDATORY_PROMPT, OPTIONAL_PROMPT};
 use doogie::constants::NodeType;
 use doogie::Node;
 use errors::{HowserError, HowserResult};
+use std::fmt::{Debug, Formatter, Error};
 
 /// Element-Level match types for `Node`s.
 #[derive(PartialEq, Clone, Debug)]
@@ -73,8 +74,14 @@ impl Comment {
 }
 
 /// Represents a pairing of template prompt and document content.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ContentMatchPair(pub PromptToken, pub Option<String>);
+
+impl Debug for ContentMatchPair {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+        write!(f, "<Token: {:?}, String: {:?}, Match: {}>", self.0, self.1, Self::is_match(self))
+    }
+}
 
 impl ContentMatchPair {
     /// Determines if this instance represents a valid match of prompt and content.

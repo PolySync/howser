@@ -624,11 +624,27 @@ impl<'a> Validator<'a> {
 
     fn container_inline_matches(&self, node: &Node, rx: &Node) -> HowserResult<bool> {
         if !self.types_match(node, rx)? {
+            debug!("container_inline_matches -- Types do not match");
             return Ok(false);
         }
 
-        match self.validate_sibling_inlines(rx, node)? {
-            Some(_errs) => Ok(false),
+        let node_type = node
+            .capabilities
+            .get
+            .as_ref()
+            .ok_or(HowserError::CapabilityError)?
+            .get_type()?;
+
+        let result = match node_type {
+            NodeType::CMarkNodeLink => self.validate_link_node_content(node, rx),
+            _ => self.validate_sibling_inlines(rx, node)
+        }?;
+
+        match result {
+            Some(_errs) => {
+                debug!("container_inline_matches -- Contents do not match");
+                Ok(false)
+            },
             None => Ok(true),
         }
     }
@@ -698,7 +714,6 @@ impl<'a> Validator<'a> {
         node: &Node,
         rx: &Node,
     ) -> HowserResult<ValidationProblems> {
-        // Todo -- add validation for link content
         let node_getter = node.capabilities
             .get
             .as_ref()
@@ -716,25 +731,28 @@ impl<'a> Validator<'a> {
         let rx_title = rx_getter.get_title()?;
         let title_match_pairs = Self::match_contents(&node_title, &rx_title)?;
 
-        let node_content = node_getter.get_content()?;
-        let rx_content = rx_getter.get_content()?;
-        let content_match_pairs = Self::match_contents(&node_content, &rx_content)?;
-
-        if ContentMatchPair::contains_mismatch(&url_match_pairs)
-            || ContentMatchPair::contains_mismatch(&title_match_pairs)
-            || ContentMatchPair::contains_mismatch(&content_match_pairs)
-        {
-            let error = ContentError::new(
+        if ContentMatchPair::contains_mismatch(&url_match_pairs) {
+            debug!("validate_link_node_content -- Link destination does not match");
+            Ok(Some(vec![Box::new(ContentError::new(
                 rx,
                 node,
                 &self.prescription,
                 &self.document,
-                content_match_pairs.clone(),
-            )?;
-            return Ok(Some(vec![Box::new(error)]));
+                url_match_pairs.clone(),
+            )?)]))
+        } else if ContentMatchPair::contains_mismatch(&title_match_pairs) {
+            debug!("validate_link_node_content -- Link title does not match");
+            Ok(Some(vec![Box::new(ContentError::new(
+                rx,
+                node,
+                &self.prescription,
+                &self.document,
+                title_match_pairs.clone(),
+            )?)]))
+        } else {
+            debug!("validate_link_node_content -- Link attrs match, checking contents");
+            self.validate_sibling_inlines(rx, node)
         }
-
-        Ok(None)
     }
 
     fn validate_general_node_content(
@@ -752,9 +770,13 @@ impl<'a> Validator<'a> {
             .ok_or(HowserError::CapabilityError)?;
         let node_content = node_getter.get_content()?;
         let rx_content = rx_getter.get_content()?;
+
+        info!("Node: <{}> -- RX: <{}>", node_content, rx_content);
+
         let match_pairs = Self::match_contents(&node_content, &rx_content)?;
 
         if ContentMatchPair::contains_mismatch(&match_pairs) {
+            info!("{:?}", match_pairs);
             debug!("validate_general_node_content -- Contains Mismatch");
             return Ok(Some(vec![
                 Box::new(ContentError::new(
@@ -893,7 +915,7 @@ impl<'a> Validator<'a> {
     /// Returns a vector of PromptToken parsed from the given string.
     fn tokenize_prompts(content: &String) -> HowserResult<Vec<PromptToken>> {
         let prompt_pattern = Regex::new(CONTENT_PROMPT_PATTERN)?;
-        let mut tail = String::from(content.trim());
+        let mut tail = String::from(content.trim_right());
         let mut tokens = Vec::new();
 
         while !tail.is_empty() {
