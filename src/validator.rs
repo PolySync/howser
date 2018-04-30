@@ -226,34 +226,42 @@ impl<'a> Validator<'a> {
                     .ok_or(HowserError::CapabilityError)?
                     .itself()?;
 
-                match self.consume_block_match(
-                    current_rx,
+                match (
                     current_node,
-                    next_bookmark,
-                    parent_node,
-                )? {
-                    MatchResult::State(state) => {
-                        let MatchState {
-                            rx: _,
-                            node,
-                            bookmark,
-                        } = state;
-                        if match_count == 1 {
-                            output_bookmark = match bookmark {
-                                Some(ref node) => Some(node.capabilities
-                                    .traverse
-                                    .as_ref()
-                                    .ok_or(HowserError::CapabilityError)?
-                                    .itself()?),
-                                _ => None,
-                            };
-                        }
-                        next_node = node;
-                        next_bookmark = bookmark;
-                        match_count += 1;
-                    }
-                    MatchResult::Error(_) => {
-                        break;
+                    self.prescription.document.get_match_type(&current_rx)?,
+                ) {
+                    (None, MatchType::Optional) => break,
+                    (current_node, _) => {
+                        match self.consume_block_match(
+                            current_rx,
+                            current_node,
+                            next_bookmark,
+                            parent_node,
+                        )? {
+                            MatchResult::State(state) => {
+                                let MatchState {
+                                    rx: _,
+                                    node,
+                                    bookmark,
+                                } = state;
+                                if match_count == 1 {
+                                    output_bookmark = match bookmark {
+                                        Some(ref node) => Some(node.capabilities
+                                            .traverse
+                                            .as_ref()
+                                            .ok_or(HowserError::CapabilityError)?
+                                            .itself()?),
+                                        _ => None,
+                                    };
+                                }
+                                next_node = node;
+                                next_bookmark = bookmark;
+                                match_count += 1;
+                            }
+                            MatchResult::Error(_) => {
+                                break;
+                            }
+                        };
                     }
                 };
             }
@@ -625,8 +633,7 @@ impl<'a> Validator<'a> {
             return Ok(false);
         }
 
-        let node_type = node
-            .capabilities
+        let node_type = node.capabilities
             .get
             .as_ref()
             .ok_or(HowserError::CapabilityError)?
@@ -634,14 +641,14 @@ impl<'a> Validator<'a> {
 
         let result = match node_type {
             NodeType::CMarkNodeLink => self.validate_link_node_content(node, rx),
-            _ => self.validate_sibling_inlines(rx, node)
+            _ => self.validate_sibling_inlines(rx, node),
         }?;
 
         match result {
             Some(_errs) => {
                 debug!("container_inline_matches -- Contents do not match");
                 Ok(false)
-            },
+            }
             None => Ok(true),
         }
     }
@@ -730,22 +737,26 @@ impl<'a> Validator<'a> {
 
         if ContentMatchPair::contains_mismatch(&url_match_pairs) {
             debug!("validate_link_node_content -- Link destination does not match");
-            Ok(Some(vec![Box::new(ContentError::new(
-                rx,
-                node,
-                &self.prescription,
-                &self.document,
-                url_match_pairs.clone(),
-            )?)]))
+            Ok(Some(vec![
+                Box::new(ContentError::new(
+                    rx,
+                    node,
+                    &self.prescription,
+                    &self.document,
+                    url_match_pairs.clone(),
+                )?),
+            ]))
         } else if ContentMatchPair::contains_mismatch(&title_match_pairs) {
             debug!("validate_link_node_content -- Link title does not match");
-            Ok(Some(vec![Box::new(ContentError::new(
-                rx,
-                node,
-                &self.prescription,
-                &self.document,
-                title_match_pairs.clone(),
-            )?)]))
+            Ok(Some(vec![
+                Box::new(ContentError::new(
+                    rx,
+                    node,
+                    &self.prescription,
+                    &self.document,
+                    title_match_pairs.clone(),
+                )?),
+            ]))
         } else {
             debug!("validate_link_node_content -- Link attrs match, checking contents");
             self.validate_sibling_inlines(rx, node)
@@ -1123,9 +1134,29 @@ mod tests {
     }
 
     #[test]
-    fn test_repeatable_wildcard_paragraph_match() {
+    fn test_repeatable_mandatory_wildcard_paragraph_match() {
         let rx_text = "\
                        -!!-\n\n\
+                       -\"\"-";
+
+        let match_text = "Some random first paragraph\n\nSome random second paragraph";
+
+        let rx_root = parse_document(&rx_text.to_string());
+        let match_root = parse_document(&match_text.to_string());
+
+        let rx = Document::new(&rx_root, None).into_prescription().unwrap();
+        let doc = Document::new(&match_root, None);
+        let validator = Validator::new(rx, doc);
+
+        let report = validator.validate().unwrap();
+
+        assert!(report.errors.is_none());
+    }
+
+    #[test]
+    fn test_repeatable_optional_wildcard_paragraph_match() {
+        let rx_text = "\
+                       -??-\n\n\
                        -\"\"-";
 
         let match_text = "Some random first paragraph\n\nSome random second paragraph";
