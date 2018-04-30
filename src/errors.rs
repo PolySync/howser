@@ -204,12 +204,10 @@ impl Reportable for SpecWarning {
     }
 
     fn long_msg(&self) -> String {
-        // Todo -- implement verbose message format.
         self.short_msg()
     }
 
     fn code(&self) -> u32 {
-        // Todo -- contextual error codes.
         1
     }
 }
@@ -255,7 +253,6 @@ impl DocumentError {
             .as_ref()
             .ok_or(HowserError::CapabilityError)?;
 
-        // Todo -- Implement get_base_start_line
         let document_line = doc_node_getter.get_start_line()?;
         let rx_line = doc_node_getter.get_start_line()?;
         let document_file = document
@@ -335,7 +332,6 @@ impl Reportable for DocumentError {
     }
 
     fn code(&self) -> u32 {
-        // Todo -- Contextual Error Codes
         1
     }
 }
@@ -379,7 +375,6 @@ impl ContentError {
             .as_ref()
             .ok_or(HowserError::CapabilityError)?;
 
-        // Todo -- Implement get_base_start_line
         let document_line = doc_node_getter.get_start_line()?;
         let rx_line = doc_node_getter.get_start_line()?;
         let document_file = document
@@ -468,12 +463,10 @@ impl Reportable for ContentError {
     }
 
     fn long_msg(&self) -> String {
-        // Todo -- Implement verbose message format.
         self.short_msg()
     }
 
     fn code(&self) -> u32 {
-        // Todo -- contextual error codes.
         1
     }
 }
@@ -515,7 +508,6 @@ impl LinkError {
             .as_ref()
             .ok_or(HowserError::CapabilityError)?;
 
-        // Todo -- Implement get_base_start_line
         let document_line = _doc_node_getter.get_start_line()?;
         let rx_line = _doc_node_getter.get_start_line()?;
         let document_file = document
@@ -559,12 +551,10 @@ impl Reportable for LinkError {
     }
 
     fn long_msg(&self) -> String {
-        // Todo -- implement verbose message format.
         self.short_msg()
     }
 
     fn code(&self) -> u32 {
-        // Todo -- Contextual error codes
         1
     }
 }

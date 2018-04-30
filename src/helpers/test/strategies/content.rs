@@ -86,7 +86,6 @@ pub mod prompts {
             .boxed()
     }
 
-    // Todo -- refactor
     /// Returns a content prompt optionally followed by some literal content.
     ///
     /// Used to compose valid prompt sequences.

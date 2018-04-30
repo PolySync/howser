@@ -2,7 +2,6 @@ use proptest::prelude::*;
 use std::ops::Range;
 use super::content::arb_comment;
 use super::content::matches::arb_content_matches;
-use super::helpers::serialize_match_seq;
 use data::{Comment, ContentMatchPair, PromptToken};
 use doogie::{CapabilityFactory, Node, NodeFactory};
 use doogie::constants::NodeType;
@@ -13,13 +12,11 @@ pub enum MatchType {
     Pair(MatchPair),
     Repeatable(RepeatableMatch),
 }
-
 #[derive(Debug)]
 pub struct MatchPair {
     rx: Node,
     doc: Node,
 }
-
 #[derive(Debug)]
 pub struct RepeatableMatch {
     rx: Node,
@@ -31,30 +28,6 @@ type MandatoryContainerMatchChild = MatchType;
 type LiteralContainerMatchChild = MatchType;
 type ArbitraryContainerMatchChild = MatchType;
 
-//// Todo -- Deprecate in favor of inline generator
-pub fn arb_link_match() -> BoxedStrategy<(String, String)> {
-    _arb_link_match()
-}
-prop_compose!{
-    fn _arb_link_match()
-        (
-            text in arb_content_matches(1..10, 1..10),
-            destination in arb_content_matches(1..10, 1..2),
-            _title in arb_content_matches(1..10, 1..10)
-        ) -> (String, String)
-    {
-        let (template_text, link_text) = serialize_match_seq(&text);
-        let (template_dest, link_dest) = serialize_match_seq(&destination);
-        // TODO -- link title is only recognized by cmark if there is a destination preceding it.
-
-        let link_template = format!("[{}]({})", template_text, template_dest);
-        let link_match = format!("[{}]({})", link_text, link_dest);
-
-        (link_template, link_match)
-    }
-}
-
-//// Todo -- Deprecate
 pub fn arb_paragraph_match(
     elements: Range<usize>,
 ) -> BoxedStrategy<(Vec<ContentMatchPair>, Option<Comment>)> {

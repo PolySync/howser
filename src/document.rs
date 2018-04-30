@@ -60,28 +60,6 @@ impl<'a> Document<'a> {
         Ok(None)
     }
 
-    // TODO -- Remove this debugging function after no longer needed.
-    /// Prints a textual representation of traversing the document tree.
-    pub fn output_nodes(&self) {
-        println!("------- Begin Structure -----------");
-        let traverser = self.root.capabilities.traverse.as_ref().unwrap();
-
-        for (node, e) in traverser.iter() {
-            if e == IterEventType::Enter {
-                let getter = node.capabilities.get.as_ref().unwrap();
-                let found_type = getter.get_type().unwrap();
-                let content = getter.get_content().unwrap();
-                println!(
-                    "Type: {:?}\nContent: {}\nMatch Type: {:?}\n",
-                    found_type,
-                    content,
-                    self.get_match_type(&node).unwrap()
-                );
-            }
-        }
-        println!("------- End Structure----------");
-    }
-
     /// Returns the `MatchType` of the specified document node.
     pub fn get_match_type(&self, node: &Node) -> HowserResult<MatchType> {
         let getter = node.capabilities

@@ -182,7 +182,6 @@ impl<'a> Validator<'a> {
             }
             MatchType::None => {
                 error!("consume_block_match -- Encountered MatchType::None");
-                // Todo -- This should never get reached. Let's see if we can get this to go away.
                 Ok(MatchResult::State(MatchState {
                     rx: Some(rx),
                     node,
@@ -377,7 +376,6 @@ impl<'a> Validator<'a> {
                 }
             }
         } else {
-            // Todo -- this branch is identical to above. Refactor.
             // No unmatched nodes left to match against rx. Search from bookmark for matching node.
             if let Some(prev_match) = self.scan_for_match(&bookmark, &None, &rx)? {
                 // Match was found in a previously matched node. Rewind state to that node and advance the prescription.
@@ -449,7 +447,6 @@ impl<'a> Validator<'a> {
                 })
             }
         } else {
-            // Todo -- this branch is identical to above. Refactor.
             // No nodes left to match against rx, but is optional. Advance rx.
             let next_rx = rx.capabilities
                 .traverse
@@ -881,7 +878,6 @@ impl<'a> Validator<'a> {
                     }
                 }
                 PromptToken::None => {
-                    // Todo -- refactor to let a none prompt indicate an empty rx content string.
                     return Err(HowserError::RuntimeError(format!(
                         "Tokenize Prompts should not return a None prompt"
                     )));
