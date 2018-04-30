@@ -1,5 +1,7 @@
 #[macro_use]
 extern crate clap;
+#[macro_use]
+extern crate log;
 
 extern crate doogie;
 extern crate env_logger;
@@ -21,6 +23,7 @@ fn main() {
 
     let app = make_app();
     let matches = app.get_matches();
+
     let (issues, options) = match matches.subcommand() {
         ("check", Some(sub_m)) => {
             let options = vec![CLIOption::VerboseMode(sub_m.is_present("verbose"))];
@@ -28,7 +31,11 @@ fn main() {
         }
         ("validate", Some(sub_m)) => {
             let options = vec![CLIOption::VerboseMode(sub_m.is_present("verbose"))];
-            (validate(sub_m), options)
+            if let Some(filemane) = sub_m.value_of("pharmacy") {
+                (do_pharmacy_job(&sub_m), options)
+            } else {
+                (validate(sub_m), options)
+            }
         }
         _ => (
             Err(HowserError::Usage(matches.usage().to_string())),
@@ -72,7 +79,7 @@ fn make_app<'a, 'b>() -> App<'a, 'b> {
                 .arg(
                     Arg::with_name("prescription")
                         .required(true)
-                        .help("Prescription file to check.")
+                        .help("Prescription file to check")
                         .takes_value(true)
                         .value_name("PRESCRIPTION"),
                 ),
@@ -83,6 +90,13 @@ fn make_app<'a, 'b>() -> App<'a, 'b> {
                 .help_message("Prints help information.")
                 .setting(AppSettings::ArgRequiredElseHelp)
                 .arg(
+                    Arg::with_name("pharmacy")
+                        .short("-p")
+                        .long("pharmacy")
+                        .help("Performs validation based on a pharmacy file")
+                        .value_name("PHARMACY")
+                        .takes_value(true))
+                .arg(
                     Arg::with_name("verbose")
                         .short("v")
                         .long("verbose")
@@ -90,13 +104,13 @@ fn make_app<'a, 'b>() -> App<'a, 'b> {
                 )
                 .arg(
                     Arg::with_name("prescription")
-                        .required(true)
+                        .required_unless("pharmacy")
                         .takes_value(true)
                         .value_name("PRESCRIPTION"),
                 )
                 .arg(
                     Arg::with_name("document")
-                        .required(true)
+                        .required_unless("pharmacy")
                         .takes_value(true)
                         .value_name("DOCUMENT"),
                 ),
@@ -144,12 +158,19 @@ fn check(args: &ArgMatches) -> HowserResult<Option<ValidationProblem>> {
     }
 }
 
+fn do_pharmacy_job(matches: &ArgMatches) -> (HowserResult<ValidationReport>, Vec<CLIOption>) {
+    // get pharmacy file
+    // parse rx, doc pairs
+    // loop through pairs and return report
+    (Ok(ValidationReport::new(None, None)), Vec::new())
+}
+
 #[cfg(test)]
 mod tests {
     use super::clap::ErrorKind;
 
     #[test]
-    fn test_matches_validate_subcommand() {
+    fn test_validate_subcommand() {
         let app = super::make_app();
         let matches =
             app.get_matches_from(vec!["howser", "validate", "some_template", "some_document"]);
@@ -201,7 +222,7 @@ mod tests {
     }
 
     #[test]
-    fn test_matches_check_subcommand() {
+    fn test_check_subcommand() {
         let app = super::make_app();
         let matches = app.get_matches_from(vec!["howser", "check", "some_template"]);
         assert_eq!(matches.subcommand_name(), Some("check"));
@@ -236,6 +257,7 @@ mod tests {
             panic!();
         }
     }
+
 }
 
 /// Returns the textual content of the indicated file
