@@ -93,7 +93,7 @@ Rx Rejected!
 ## Tests
 
 Howser contains both unit tests and property based tests. The unit tests provide coverage for application logic and
-certain specific document validation scenarios while the property based tests target broad coverage coverage of 
+certain specific document validation scenarios while the property based tests target broad coverage of 
 arbitrarily generated validation scenarios.
 
 ### Running Tests
