@@ -42,6 +42,12 @@ enum MatchResult {
     Error(Vec<Box<Reportable>>),
 }
 
+#[derive(Debug)]
+enum MatchDirection {
+    Left,
+    Right,
+}
+
 /// Validates a `Document` against an Rx `Prescription`.
 pub struct Validator<'a> {
     prescription: Prescription<'a>,
@@ -58,6 +64,7 @@ impl<'a> Validator<'a> {
 
     /// Returns the results of validating the document against the prescription.
     pub fn validate(&self) -> HowserResult<ValidationReport> {
+        trace!("validate");
         match self.validate_sibling_blocks(&self.prescription.document.root, &self.document.root)? {
             Some(errors) => Ok(ValidationReport::new(Some(errors), None)),
             None => Ok(ValidationReport::new(None, None)),
@@ -70,9 +77,10 @@ impl<'a> Validator<'a> {
         parent_rx_node: &Node,
         parent_doc_node: &Node,
     ) -> HowserResult<ValidationProblems> {
-        debug!("-------validate_sibling_blocks-------");
+        trace!("validate_sibling_blocks");
+        debug!("Node Tree");
         debug!(
-            "Node: {}",
+            "{}",
             parent_doc_node
                 .capabilities
                 .render
@@ -80,8 +88,9 @@ impl<'a> Validator<'a> {
                 .unwrap()
                 .render_xml()
         );
+        debug!("Rx Tree");
         debug!(
-            "Rx: {}",
+            "{}",
             parent_rx_node
                 .capabilities
                 .render
@@ -89,7 +98,6 @@ impl<'a> Validator<'a> {
                 .unwrap()
                 .render_xml()
         );
-        debug!("-------------------------------");
 
         let parent_rx_traverser = parent_rx_node
             .capabilities
@@ -121,14 +129,13 @@ impl<'a> Validator<'a> {
                     // update local state
                 }
                 MatchResult::Error(errors) => {
-                    debug!("validate_sibling_blocks -- Matching error");
                     return Ok(Some(errors));
                 }
             }
         }
 
         if let Some(extra_node) = current_node {
-            debug!("validate_sibling_blocks -- Superfluous Nodes");
+            info!("Superfluous Nodes Error");
             let error = DocumentError::new(
                 &extra_node,
                 parent_rx_node,
@@ -150,21 +157,19 @@ impl<'a> Validator<'a> {
         bookmark: Option<Node>,
         parent_node: &Node,
     ) -> HowserResult<MatchResult> {
+        trace!("consume_block_match");
         match self.prescription.document.get_match_type(&rx)? {
             MatchType::Repeatable => {
-                debug!("consume_block_match -- Consuming Repeatable");
                 self.consume_repeatable_matches(rx, node, bookmark, parent_node)
             }
             MatchType::Mandatory => {
-                debug!("consume_block_match -- Consuming Mandatory");
-
                 if let Some(bookmark) = bookmark {
                     self.consume_mandatory_block_match(
                         MandatoryMatchInput { rx, node, bookmark },
                         parent_node,
                     )
                 } else {
-                    debug!("consume_block_match -- Missing mandatory node -- no bookmark");
+                    info!("Missing Mandatory node and no bookmark");
                     let error = DocumentError::new(
                         parent_node,
                         &rx,
@@ -176,14 +181,13 @@ impl<'a> Validator<'a> {
                 }
             }
             MatchType::Optional => {
-                debug!("consume_block_match -- Consuming Optional");
                 let OptionalMatchOutput { rx, node } =
                     self.consume_optional_block_match(OptionalMatchInput { rx, node })?;
 
                 Ok(MatchResult::State(MatchState { rx, node, bookmark }))
             }
             MatchType::None => {
-                error!("consume_block_match -- Encountered MatchType::None");
+                warn!("Encountered MatchType::None");
                 Ok(MatchResult::State(MatchState {
                     rx: Some(rx),
                     node,
@@ -200,6 +204,7 @@ impl<'a> Validator<'a> {
         bookmark: Option<Node>,
         parent_node: &Node,
     ) -> HowserResult<MatchResult> {
+        trace!("consume_repeatable_matches");
         let ditto_traverser = rx.capabilities
             .traverse
             .as_ref()
@@ -280,7 +285,7 @@ impl<'a> Validator<'a> {
 
             match (match_count, match_type) {
                 (0, MatchType::Mandatory) => {
-                    debug!("consume_repeatable_matches -- Missing mandatory node");
+                    info!("Missing mandatory node");
                     let error = DocumentError::new(
                         parent_node,
                         &rx,
@@ -302,7 +307,7 @@ impl<'a> Validator<'a> {
                 })),
             }
         } else {
-            debug!("consume_repeatable_matches -- Rx Error -- No subject of ditto token");
+            info!("Rx Error -- No subject of ditto token");
             let error =
                 SpecWarning::new(&rx, &self.prescription, "No valid subject for ditto token.")?;
             Ok(MatchResult::Error(vec![Box::new(error)]))
@@ -314,6 +319,7 @@ impl<'a> Validator<'a> {
         input: MandatoryMatchInput,
         parent_node: &Node,
     ) -> HowserResult<MatchResult> {
+        trace!("consume_mandatory_block_match");
         let MandatoryMatchInput { rx, node, bookmark } = input;
 
         if let Some(node) = node {
@@ -375,7 +381,7 @@ impl<'a> Validator<'a> {
                     }))
                 } else {
                     // No previously matched nodes match the current rx either. Validation fails.
-                    debug!("consume_mandatory_block_match -- Nodes do not match");
+                    info!("Nodes do not match");
                     let error = DocumentError::new(
                         parent_node,
                         &rx,
@@ -409,7 +415,7 @@ impl<'a> Validator<'a> {
                 }))
             } else {
                 // No previously matched nodes match the current rx either. Validation fails.
-                debug!("consume_mandatory_block_match -- Nodes do not match");
+                info!("consume_mandatory_block_match -- Nodes do not match");
                 let error = DocumentError::new(
                     parent_node,
                     &rx,
@@ -426,6 +432,7 @@ impl<'a> Validator<'a> {
         &self,
         input: OptionalMatchInput,
     ) -> HowserResult<OptionalMatchOutput> {
+        trace!("consume_optional_block_match");
         let OptionalMatchInput { rx, node } = input;
 
         if let Some(node) = node {
@@ -474,6 +481,7 @@ impl<'a> Validator<'a> {
         end_node: &Option<Node>,
         rx: &Node,
     ) -> HowserResult<Option<Node>> {
+        trace!("scan_for_match");
         let mut current_node = Some(start_node
             .capabilities
             .traverse
@@ -520,6 +528,7 @@ impl<'a> Validator<'a> {
     }
 
     fn block_matches(&self, node: &Node, rx: &Node) -> HowserResult<bool> {
+        trace!("block_matches");
         match ElementType::determine(rx)? {
             ElementType::ContainerBlock => Ok(self.container_block_matches(&node, &rx)?),
             ElementType::LeafBlock => Ok(self.leaf_block_matches(&node, &rx)?),
@@ -529,7 +538,6 @@ impl<'a> Validator<'a> {
 
     fn container_block_matches(&self, node: &Node, rx: &Node) -> HowserResult<bool> {
         if !self.types_match(node, rx)? {
-            debug!("container_block_matches -- Types do not match");
             return Ok(false);
         }
 
@@ -538,7 +546,6 @@ impl<'a> Validator<'a> {
 
         match (child_validation, is_wildcard) {
             (Some(_errs), false) => {
-                debug!("container_block_matches -- Child validation failed and no wildcard");
                 Ok(false)
             }
             _ => Ok(true),
@@ -546,8 +553,8 @@ impl<'a> Validator<'a> {
     }
 
     fn leaf_block_matches(&self, node: &Node, rx: &Node) -> HowserResult<bool> {
+        trace!("leaf_block_matches");
         if !self.types_match(node, rx)? {
-            debug!("leaf_block_matches -- Types do not match");
             return Ok(false);
         }
 
@@ -556,7 +563,6 @@ impl<'a> Validator<'a> {
 
         match (child_validation, is_wildcard) {
             (Some(_errs), false) => {
-                debug!("leaf_block_matches -- Child validation failed and no wildcard");
                 Ok(false)
             }
             _ => Ok(true),
@@ -568,6 +574,7 @@ impl<'a> Validator<'a> {
         parent_rx: &Node,
         parent_node: &Node,
     ) -> HowserResult<ValidationProblems> {
+        trace!("validate_sibling_inlines");
         let parent_rx_traverser = parent_rx
             .capabilities
             .traverse
@@ -596,7 +603,7 @@ impl<'a> Validator<'a> {
                         .ok_or(HowserError::CapabilityError)?
                         .next_sibling()?;
                 } else {
-                    debug!("validate_sibling_inlines --  Inline match failed");
+                    info!("Inline match Error");
                     let error = DocumentError::new(
                         &node,
                         &rx,
@@ -607,7 +614,7 @@ impl<'a> Validator<'a> {
                     return Ok(Some(vec![Box::new(error)]));
                 }
             } else {
-                debug!("validate_sibling_inlines --  Missing node");
+                info!("Missing node Error");
                 let error = DocumentError::new(
                     &parent_node,
                     &rx,
@@ -623,6 +630,7 @@ impl<'a> Validator<'a> {
     }
 
     fn inline_matches(&self, rx: &Node, node: &Node) -> HowserResult<bool> {
+        trace!("inline_matches");
         match ElementType::determine(rx)? {
             ElementType::InlineLeaf => self.leaf_inline_matches(node, rx),
             ElementType::InlineContainer => self.container_inline_matches(node, rx),
@@ -631,8 +639,8 @@ impl<'a> Validator<'a> {
     }
 
     fn container_inline_matches(&self, node: &Node, rx: &Node) -> HowserResult<bool> {
+        trace!("container_inline_matches");
         if !self.types_match(node, rx)? {
-            debug!("container_inline_matches -- Types do not match");
             return Ok(false);
         }
 
@@ -649,7 +657,6 @@ impl<'a> Validator<'a> {
 
         match result {
             Some(_errs) => {
-                debug!("container_inline_matches -- Contents do not match");
                 Ok(false)
             }
             None => Ok(true),
@@ -657,21 +664,21 @@ impl<'a> Validator<'a> {
     }
 
     fn leaf_inline_matches(&self, node: &Node, rx: &Node) -> HowserResult<bool> {
+        trace!("leaf_inline_matches");
         if !self.types_match(node, rx)? {
-            debug!("leaf_inline_matches -- Types do not match");
             return Ok(false);
         }
 
         match self.validate_node_content(node, rx)? {
             None => Ok(true),
             Some(_) => {
-                debug!("leaf_inline_matches -- Node contents don't match");
                 Ok(false)
             }
         }
     }
 
     fn types_match(&self, node: &Node, rx: &Node) -> HowserResult<bool> {
+        trace!("types_match");
         let node_getter = node.capabilities
             .get
             .as_ref()
@@ -702,6 +709,7 @@ impl<'a> Validator<'a> {
     }
 
     fn node_is_wildcard(&self, rx: &Node) -> HowserResult<bool> {
+        trace!("node_is_wildcard");
         self.prescription.document.is_wildcard(rx)
     }
 
@@ -721,6 +729,7 @@ impl<'a> Validator<'a> {
         node: &Node,
         rx: &Node,
     ) -> HowserResult<ValidationProblems> {
+        trace!("validate_link_node_content");
         let node_getter = node.capabilities
             .get
             .as_ref()
@@ -739,7 +748,7 @@ impl<'a> Validator<'a> {
         let title_match_pairs = Self::match_contents(&node_title, &rx_title)?;
 
         if ContentMatchPair::contains_mismatch(&url_match_pairs) {
-            debug!("validate_link_node_content -- Link destination does not match");
+            info!("Link destination Error");
             Ok(Some(vec![
                 Box::new(ContentError::new(
                     rx,
@@ -750,7 +759,7 @@ impl<'a> Validator<'a> {
                 )?),
             ]))
         } else if ContentMatchPair::contains_mismatch(&title_match_pairs) {
-            debug!("validate_link_node_content -- Link title does not match");
+            info!("Link title Error");
             Ok(Some(vec![
                 Box::new(ContentError::new(
                     rx,
@@ -761,7 +770,6 @@ impl<'a> Validator<'a> {
                 )?),
             ]))
         } else {
-            debug!("validate_link_node_content -- Link attrs match, checking contents");
             self.validate_sibling_inlines(rx, node)
         }
     }
@@ -771,6 +779,7 @@ impl<'a> Validator<'a> {
         node: &Node,
         rx: &Node,
     ) -> HowserResult<ValidationProblems> {
+        trace!("validate_general_node_content");
         let rx_getter = rx.capabilities
             .get
             .as_ref()
@@ -780,15 +789,11 @@ impl<'a> Validator<'a> {
             .as_ref()
             .ok_or(HowserError::CapabilityError)?;
         let node_content = node_getter.get_content()?;
-        let rx_content = rx_getter.get_content()?;
-
-        info!("Node: <{}> -- RX: <{}>", node_content, rx_content);
-
+        let rx_content = rx_getter.get_content()?.trim_left().to_string();
         let match_pairs = Self::match_contents(&node_content, &rx_content)?;
 
         if ContentMatchPair::contains_mismatch(&match_pairs) {
-            info!("{:?}", match_pairs);
-            debug!("validate_general_node_content -- Contains Mismatch");
+            info!("Content Error");
             return Ok(Some(vec![
                 Box::new(ContentError::new(
                     rx,
@@ -808,17 +813,11 @@ impl<'a> Validator<'a> {
         node_content: &String,
         rx_content: &String,
     ) -> HowserResult<Vec<ContentMatchPair>> {
+        trace!("match_contents");
         let mut content_queue = node_content.clone();
-
         let mut prompts = VecDeque::from(Validator::tokenize_prompts(rx_content)?);
-
         let mut left_stack = Vec::new();
         let mut right_stack = Vec::new();
-
-        enum MatchDirection {
-            Left,
-            Right,
-        }
         let mut current_direction = MatchDirection::Left;
 
         while !prompts.is_empty() {
@@ -826,21 +825,23 @@ impl<'a> Validator<'a> {
                 MatchDirection::Left => (prompts.pop_front().unwrap(), &mut left_stack),
                 MatchDirection::Right => (prompts.pop_back().unwrap(), &mut right_stack),
             };
-
             match prompt {
                 PromptToken::Mandatory => {
                     if content_queue.is_empty() {
-                        stack.push(ContentMatchPair(prompt, None));
+                        let pair = ContentMatchPair(prompt, None);
+                        stack.push(pair);
                     } else {
                         let substitution = match current_direction {
                             MatchDirection::Left => content_queue.remove(0).to_string(),
                             MatchDirection::Right => content_queue.pop().unwrap().to_string(),
                         };
-                        stack.push(ContentMatchPair(PromptToken::Mandatory, Some(substitution)));
+                        let pair = ContentMatchPair(PromptToken::Mandatory, Some(substitution));
+                        stack.push(pair);
                     }
                 }
                 PromptToken::Optional => {
-                    stack.push(ContentMatchPair(PromptToken::Optional, None));
+                    let pair = ContentMatchPair(PromptToken::Optional, None);
+                    stack.push(pair);
                 }
                 PromptToken::Literal(ref content) => {
                     let temp_queue = content_queue.clone();
@@ -875,15 +876,17 @@ impl<'a> Validator<'a> {
                         if let Some(preface) = preface {
                             match stack.last() {
                                 Some(&ContentMatchPair(PromptToken::Literal(_), _)) | None => {
-                                    stack.push(ContentMatchPair(PromptToken::None, Some(preface)));
+                                    let pair = ContentMatchPair(PromptToken::None, Some(preface));
+                                    stack.push(pair);
                                 }
                                 _ => (),
                             };
                         }
-                        stack.push(ContentMatchPair(
+                        let match_pair = ContentMatchPair(
                             PromptToken::Literal(content.to_string()),
                             Some(substitution),
-                        ));
+                        );
+                        stack.push(match_pair);
                     } else {
                         stack.push(ContentMatchPair(
                             PromptToken::Literal(content.to_string()),
@@ -910,7 +913,8 @@ impl<'a> Validator<'a> {
                     Some(&ContentMatchPair(PromptToken::Literal(_), _)),
                     Some(&ContentMatchPair(PromptToken::Literal(_), _)),
                 ) => {
-                    left_stack.push(ContentMatchPair(PromptToken::None, Some(content_queue)));
+                    let pair = ContentMatchPair(PromptToken::None, Some(content_queue));
+                    left_stack.push(pair);
                 }
                 _ => (),
             }
@@ -924,8 +928,9 @@ impl<'a> Validator<'a> {
 
     /// Returns a vector of PromptToken parsed from the given string.
     fn tokenize_prompts(content: &String) -> HowserResult<Vec<PromptToken>> {
+        trace!("tokenize_prompts");
         let prompt_pattern = Regex::new(CONTENT_PROMPT_PATTERN)?;
-        let mut tail = String::from(content.trim_right());
+        let mut tail = content.to_string();
         let mut tokens = Vec::new();
 
         while !tail.is_empty() {
@@ -1220,6 +1225,24 @@ mod tests {
     #[test]
     fn test_mandatory_block_level_prompted_paragraph_match() {
         let rx_text = "-!!--!!-my dear-??-";
+        let match_text = "Elementary my dear Watson";
+
+        let rx_root = parse_document(&rx_text.to_string());
+        let match_root = parse_document(&match_text.to_string());
+
+        let rx = Document::new(&rx_root, None).into_prescription().unwrap();
+        let doc = Document::new(&match_root, None);
+
+        let validator = Validator::new(rx, doc);
+
+        let report = validator.validate().unwrap();
+
+        assert!(report.errors.is_none());
+    }
+
+    #[test]
+    fn test_leading_whitespace_ignored_in_mandatory_block_level_paragraph_match() {
+        let rx_text = "-!!-  -!!-my dear-??-";
         let match_text = "Elementary my dear Watson";
 
         let rx_root = parse_document(&rx_text.to_string());
