@@ -70,6 +70,7 @@ impl<'a> Validator<'a> {
         parent_rx_node: &Node,
         parent_doc_node: &Node,
     ) -> HowserResult<ValidationProblems> {
+        debug!("-------validate_sibling_blocks-------");
         debug!(
             "Node: {}",
             parent_doc_node
@@ -88,6 +89,7 @@ impl<'a> Validator<'a> {
                 .unwrap()
                 .render_xml()
         );
+        debug!("-------------------------------");
 
         let parent_rx_traverser = parent_rx_node
             .capabilities
@@ -226,6 +228,16 @@ impl<'a> Validator<'a> {
                     .ok_or(HowserError::CapabilityError)?
                     .itself()?;
 
+                if self.prescription.document.get_match_type(&current_rx)? == MatchType::Optional {
+                    if let Some(ref node) = current_node {
+                        if ! self.types_match(node, &current_rx)? {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+
                 match self.consume_block_match(
                     current_rx,
                     current_node,
@@ -238,6 +250,7 @@ impl<'a> Validator<'a> {
                             node,
                             bookmark,
                         } = state;
+                        match_count += 1;
                         if match_count == 1 {
                             output_bookmark = match bookmark {
                                 Some(ref node) => Some(node.capabilities
@@ -250,22 +263,20 @@ impl<'a> Validator<'a> {
                         }
                         next_node = node;
                         next_bookmark = bookmark;
-                        match_count += 1;
                     }
                     MatchResult::Error(_) => {
+                         next_node = match next_node {
+                            None => None,
+                            Some(node) => node.capabilities
+                                .traverse
+                                .as_ref()
+                                .ok_or(HowserError::CapabilityError)?
+                                .prev_sibling()?,
+                        };
                         break;
                     }
                 };
             }
-
-            let current_node = match next_node {
-                None => None,
-                Some(node) => node.capabilities
-                    .traverse
-                    .as_ref()
-                    .ok_or(HowserError::CapabilityError)?
-                    .prev_sibling()?,
-            };
 
             match (match_count, match_type) {
                 (0, MatchType::Mandatory) => {
@@ -286,7 +297,7 @@ impl<'a> Validator<'a> {
                         .as_ref()
                         .ok_or(HowserError::CapabilityError)?
                         .prev_sibling()?,
-                    node: current_node,
+                    node: next_node,
                     bookmark: output_bookmark,
                 })),
             }
@@ -522,7 +533,7 @@ impl<'a> Validator<'a> {
             return Ok(false);
         }
 
-        let child_validation = self.validate_sibling_blocks(node, rx)?;
+        let child_validation = self.validate_sibling_blocks(rx, node)?;
         let is_wildcard = self.node_is_wildcard(rx)?;
 
         match (child_validation, is_wildcard) {
@@ -625,8 +636,7 @@ impl<'a> Validator<'a> {
             return Ok(false);
         }
 
-        let node_type = node
-            .capabilities
+        let node_type = node.capabilities
             .get
             .as_ref()
             .ok_or(HowserError::CapabilityError)?
@@ -634,14 +644,14 @@ impl<'a> Validator<'a> {
 
         let result = match node_type {
             NodeType::CMarkNodeLink => self.validate_link_node_content(node, rx),
-            _ => self.validate_sibling_inlines(rx, node)
+            _ => self.validate_sibling_inlines(rx, node),
         }?;
 
         match result {
             Some(_errs) => {
                 debug!("container_inline_matches -- Contents do not match");
                 Ok(false)
-            },
+            }
             None => Ok(true),
         }
     }
@@ -730,22 +740,26 @@ impl<'a> Validator<'a> {
 
         if ContentMatchPair::contains_mismatch(&url_match_pairs) {
             debug!("validate_link_node_content -- Link destination does not match");
-            Ok(Some(vec![Box::new(ContentError::new(
-                rx,
-                node,
-                &self.prescription,
-                &self.document,
-                url_match_pairs.clone(),
-            )?)]))
+            Ok(Some(vec![
+                Box::new(ContentError::new(
+                    rx,
+                    node,
+                    &self.prescription,
+                    &self.document,
+                    url_match_pairs.clone(),
+                )?),
+            ]))
         } else if ContentMatchPair::contains_mismatch(&title_match_pairs) {
             debug!("validate_link_node_content -- Link title does not match");
-            Ok(Some(vec![Box::new(ContentError::new(
-                rx,
-                node,
-                &self.prescription,
-                &self.document,
-                title_match_pairs.clone(),
-            )?)]))
+            Ok(Some(vec![
+                Box::new(ContentError::new(
+                    rx,
+                    node,
+                    &self.prescription,
+                    &self.document,
+                    title_match_pairs.clone(),
+                )?),
+            ]))
         } else {
             debug!("validate_link_node_content -- Link attrs match, checking contents");
             self.validate_sibling_inlines(rx, node)
@@ -1123,7 +1137,7 @@ mod tests {
     }
 
     #[test]
-    fn test_repeatable_wildcard_paragraph_match() {
+    fn test_repeatable_mandatory_wildcard_paragraph_match() {
         let rx_text = "\
                        -!!-\n\n\
                        -\"\"-";
@@ -1140,6 +1154,46 @@ mod tests {
         let report = validator.validate().unwrap();
 
         assert!(report.errors.is_none());
+    }
+
+    #[test]
+    fn test_repeatable_optional_wildcard_paragraph_match() {
+        let rx_text = "\
+                       -??-\n\n\
+                       -\"\"-";
+
+        let match_text = "Some random first paragraph\n\nSome random second paragraph";
+
+        let rx_root = parse_document(&rx_text.to_string());
+        let match_root = parse_document(&match_text.to_string());
+
+        let rx = Document::new(&rx_root, None).into_prescription().unwrap();
+        let doc = Document::new(&match_root, None);
+        let validator = Validator::new(rx, doc);
+
+        let report = validator.validate().unwrap();
+
+        assert!(report.errors.is_none());
+    }
+
+    #[test]
+    fn test_repeatable_optional_wildcard_paragraph_mismatch() {
+        let rx_text = "\
+                       -??-\n\n\
+                       -\"\"-";
+
+        let match_text = "# A Header\n\nSome content";
+
+        let rx_root = parse_document(&rx_text.to_string());
+        let match_root = parse_document(&match_text.to_string());
+
+        let rx = Document::new(&rx_root, None).into_prescription().unwrap();
+        let doc = Document::new(&match_root, None);
+        let validator = Validator::new(rx, doc);
+
+        let report = validator.validate().unwrap();
+
+        assert!(report.errors.is_some());
     }
 
     #[test]
