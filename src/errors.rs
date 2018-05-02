@@ -2,6 +2,7 @@
 
 extern crate regex;
 extern crate termion;
+extern crate toml;
 
 use self::regex::Error as RegexError;
 use self::termion::color;
@@ -16,6 +17,8 @@ use helpers::cli::ShellText;
 use std::error;
 use std::fmt;
 use std::io::Error as IOError;
+use std::ops::Add;
+use self::toml::de::Error as TomlError;
 
 /// Crate-wide Result type.
 pub type HowserResult<T> = Result<T, HowserError>;
@@ -32,6 +35,7 @@ pub enum HowserError {
     CapabilityError,
     RegexError(RegexError),
     PrescriptionError(SpecWarning),
+    TomlError(TomlError)
 }
 
 impl error::Error for HowserError {
@@ -44,6 +48,7 @@ impl error::Error for HowserError {
             &HowserError::CapabilityError => "Capability Error",
             &HowserError::RegexError(ref error) => error.description(),
             &HowserError::PrescriptionError(_) => "Prescription Error",
+            &HowserError::TomlError(ref err) => "TomlError"
         }
     }
 
@@ -82,6 +87,12 @@ impl From<RegexError> for HowserError {
 }
 
 /// Trait for aggregating validation problems.
+impl From<TomlError> for HowserError {
+    fn from(err: TomlError) -> Self {
+        HowserError::TomlError(err)
+    }
+}
+
 pub trait Reportable {
     /// Report in standard single line format.
     fn short_msg(&self) -> String;

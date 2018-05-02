@@ -1,8 +1,6 @@
-#[macro_use]
-extern crate clap;
-#[macro_use]
-extern crate log;
+#[macro_use] extern crate clap;
 
+extern crate toml;
 extern crate doogie;
 extern crate env_logger;
 extern crate howser;
@@ -51,6 +49,11 @@ fn main() {
         }
         Err(e) => {
             println!("{}", e.description());
+            let mut inner_err = e.cause();
+            while let Some(error) = inner_err {
+                println!("{}", error.description());
+                inner_err = error.cause();
+            }
             std::process::exit(1);
         }
     };
@@ -158,11 +161,26 @@ fn check(args: &ArgMatches) -> HowserResult<Option<ValidationProblem>> {
     }
 }
 
-fn do_pharmacy_job(matches: &ArgMatches) -> (HowserResult<ValidationReport>, Vec<CLIOption>) {
-    // get pharmacy file
-    // parse rx, doc pairs
-    // loop through pairs and return report
-    (Ok(ValidationReport::new(None, None)), Vec::new())
+fn process_pharmacy_file(args: &ArgMatches) -> HowserResult<ValidationReport> {
+    let mut report = ValidationReport::new(None, None);
+
+    if let Some(filename) = args.value_of("pharmacy") {
+        if let Ok(pharmacy_contents) = get_file_contents(filename) {
+            if let Some(specs) = pharmacy_contents.parse::<Value>()?["Specs"].as_table() {
+                for rx_file in specs.keys() {
+                    if let Some(doc_file) = specs.get(rx_file).map_or(None, |value| value.as_str()) {
+                        report = report + validate(rx_file, doc_file)?;
+                    }
+                }
+            }
+            Ok(report)
+        } else {
+            Err(HowserError::RuntimeError(format!("Pharmacy file not found: {}", filename)))
+        }
+
+    } else {
+        Err(HowserError::RuntimeError("Pharmacy filename could not be parsed from the argument string.".to_string()))
+    }
 }
 
 #[cfg(test)]
