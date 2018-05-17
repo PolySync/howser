@@ -12,12 +12,11 @@ use helpers::cli::ShellText;
 use std::error;
 use std::fmt;
 use std::io::Error as IOError;
-use std::ops::Add;
 
 /// Crate-wide Result type.
 pub type HowserResult<T> = Result<T, HowserError>;
-/// Convenience alias for validation reporting.
-pub type ValidationProblems = Option<Vec<Box<Reportable>>>;
+/// Type alias for `Reportable` trait object
+pub type ValidationProblem = Box<Reportable>;
 
 /// Error types for use with `HowserResult`.
 #[derive(Debug)]
@@ -72,73 +71,6 @@ impl From<DoogieError> for HowserError {
 impl From<RegexError> for HowserError {
     fn from(err: RegexError) -> Self {
         HowserError::RegexError(err)
-    }
-}
-
-/// Errors and warnings collected during the validation process.
-pub struct ValidationReport {
-    pub errors: ValidationProblems,
-    pub warnings: ValidationProblems,
-}
-
-impl ValidationReport {
-    pub fn new(errors: ValidationProblems, warnings: ValidationProblems) -> Self {
-        ValidationReport { errors, warnings }
-    }
-}
-
-impl Add for ValidationReport {
-    type Output = Self;
-
-    fn add(self, other: ValidationReport) -> Self {
-        let mut aggregated_errors = Vec::new();
-        let mut aggregated_warnings = Vec::new();
-
-        if let Some(mut errors) = self.errors {
-            aggregated_errors.append(&mut errors);
-        }
-        if let Some(mut errors) = other.errors {
-            aggregated_errors.append(&mut errors);
-        }
-        if let Some(mut warnings) = self.warnings {
-            aggregated_warnings.append(&mut warnings);
-        }
-        if let Some(mut warnings) = other.warnings {
-            aggregated_warnings.append(&mut warnings);
-        }
-
-        ValidationReport {
-            errors: match aggregated_errors.is_empty() {
-                true => None,
-                false => Some(aggregated_errors),
-            },
-            warnings: match aggregated_warnings.is_empty() {
-                true => None,
-                false => Some(aggregated_warnings),
-            },
-        }
-    }
-}
-
-/// Final result of the validation process.
-///
-/// Contains the final verdict on validity along with the reportable info.
-pub struct ValidationResult {
-    issues: ValidationProblems,
-    valid: bool,
-}
-
-impl ValidationResult {
-    pub fn new(issues: ValidationProblems, valid: bool) -> ValidationResult {
-        ValidationResult { issues, valid }
-    }
-
-    pub fn get_issues<'a>(&'a self) -> &'a ValidationProblems {
-        &self.issues
-    }
-
-    pub fn is_valid(&self) -> bool {
-        self.valid
     }
 }
 

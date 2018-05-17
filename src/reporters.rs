@@ -1,6 +1,6 @@
 //! Formatters for reporting validation results.
 
-use errors::ValidationResult;
+use errors::ValidationProblem;
 use helpers::cli::ShellText;
 
 /// Options for configuring a CLI report.
@@ -14,7 +14,7 @@ pub enum CLIOption {
 }
 
 /// Returns a textual report of the validation results suitable for display in a CLI environment.
-pub fn make_cli_report(result: &ValidationResult, config: Vec<CLIOption>) -> String {
+pub fn make_cli_report(issues: &Option<ValidationProblem>, config: Vec<CLIOption>) -> String {
     let mut report: Vec<String> = Vec::new();
 
     let mut verbose_mode = false;
@@ -31,18 +31,16 @@ pub fn make_cli_report(result: &ValidationResult, config: Vec<CLIOption>) -> Str
         }
     }
 
-    if let &Some(ref issues) = result.get_issues() {
-        for issue in issues {
-            report.push(match verbose_mode {
-                true => issue.long_msg(),
-                false => issue.short_msg(),
-            });
-        }
+    if let &Some(ref issue) = issues {
+        report.push(match verbose_mode {
+            true => issue.long_msg(),
+            false => issue.short_msg(),
+        });
     }
 
-    report.push(match result.is_valid() {
-        true => success_message,
-        false => failure_message,
+    report.push(match issues {
+        None => success_message,
+        Some(_) => failure_message,
     });
 
     report.join("\n\n")

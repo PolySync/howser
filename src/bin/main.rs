@@ -8,7 +8,7 @@ extern crate howser;
 use clap::{App, Arg, ArgMatches, SubCommand};
 use doogie::parse_document;
 use howser::document::Document;
-use howser::errors::{HowserError, HowserResult, ValidationProblems, ValidationResult};
+use howser::errors::{HowserError, HowserResult, ValidationProblem};
 use howser::helpers::cli::ShellText;
 use howser::reporters::{make_cli_report, CLIOption};
 use howser::validator::Validator;
@@ -20,7 +20,7 @@ fn main() {
     env_logger::init();
 
     let matches = make_app().get_matches();
-    let (report, mut options) = match matches.subcommand() {
+    let (issues, mut options) = match matches.subcommand() {
         ("check", Some(sub_m)) => {
             let success_msg = ShellText::OkColor(Box::new(ShellText::Literal(
                 "Valid Rx".to_string(),
@@ -44,11 +44,9 @@ fn main() {
     };
 
     options.push(CLIOption::VerboseMode(matches.is_present("verbose")));
-    match report {
-        Ok(problems) => {
-            let is_valid = problems.is_none();
-            let validation_result = ValidationResult::new(problems, is_valid);
-            let cli_report = make_cli_report(&validation_result, options);
+    match issues {
+        Ok(issues) => {
+            let cli_report = make_cli_report(&issues, options);
             println!("{}", cli_report);
             std::process::exit(0);
         }
@@ -98,7 +96,7 @@ fn make_app<'a, 'b>() -> App<'a, 'b> {
         )
 }
 
-fn validate(args: &ArgMatches) -> HowserResult<ValidationProblems> {
+fn validate(args: &ArgMatches) -> HowserResult<Option<ValidationProblem>> {
     let rx_name = args.value_of("prescription");
     let document_name = args.value_of("document");
 
@@ -121,13 +119,13 @@ fn validate(args: &ArgMatches) -> HowserResult<ValidationProblems> {
     }
 }
 
-fn check(args: &ArgMatches) -> HowserResult<ValidationProblems> {
+fn check(args: &ArgMatches) -> HowserResult<Option<ValidationProblem>> {
     if let Some(filename) = args.value_of("prescription") {
         let filename = String::from(filename);
         let rx_root = parse_document(&get_file_contents(&filename)?);
         let document = Document::new(&rx_root, Some(filename));
         match document.into_prescription() {
-            Err(HowserError::PrescriptionError(warning)) => Ok(Some(vec![Box::new(warning)])),
+            Err(HowserError::PrescriptionError(warning)) => Ok(Some(Box::new(warning))),
             Err(error) => Err(error),
             Ok(_) => Ok(None),
         }

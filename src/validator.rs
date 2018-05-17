@@ -13,7 +13,7 @@ use doogie::constants::NodeType;
 use doogie::Node;
 use errors::{
     ContentError, DocumentError, HowserError, HowserResult, Reportable, SpecWarning,
-    ValidationProblems,
+    ValidationProblem,
 };
 use std::collections::VecDeque;
 
@@ -41,7 +41,7 @@ struct MatchState {
 
 enum MatchResult {
     State(MatchState),
-    Error(Vec<Box<Reportable>>),
+    Error(Box<Reportable>),
 }
 
 #[derive(Debug)]
@@ -65,7 +65,7 @@ impl<'a> Validator<'a> {
     }
 
     /// Returns the results of validating the document against the prescription.
-    pub fn validate(&self) -> HowserResult<ValidationProblems> {
+    pub fn validate(&self) -> HowserResult<Option<ValidationProblem>> {
         trace!("validate");
         self.validate_sibling_blocks(&self.prescription.document.root, &self.document.root)
     }
@@ -75,7 +75,7 @@ impl<'a> Validator<'a> {
         &self,
         parent_rx_node: &Node,
         parent_doc_node: &Node,
-    ) -> HowserResult<ValidationProblems> {
+    ) -> HowserResult<Option<ValidationProblem>> {
         trace!("validate_sibling_blocks");
         debug!("Node Tree");
         debug!(
@@ -142,7 +142,7 @@ impl<'a> Validator<'a> {
                 &self.prescription,
                 "Superfluous Nodes were present.".to_string(),
             )?;
-            Ok(Some(vec![Box::new(error)]))
+            Ok(Some(Box::new(error)))
         } else {
             Ok(None)
         }
@@ -176,7 +176,7 @@ impl<'a> Validator<'a> {
                         &self.prescription,
                         "Missing mandatory node.".to_string(),
                     )?;
-                    Ok(MatchResult::Error(vec![Box::new(error)]))
+                    Ok(MatchResult::Error(Box::new(error)))
                 }
             }
             MatchType::Optional => {
@@ -292,7 +292,7 @@ impl<'a> Validator<'a> {
                         &self.prescription,
                         "Missing mandatory node.".to_string(),
                     )?;
-                    Ok(MatchResult::Error(vec![Box::new(error)]))
+                    Ok(MatchResult::Error(Box::new(error)))
                 }
                 _ => Ok(MatchResult::State(MatchState {
                     rx: repeatable_rx
@@ -312,7 +312,7 @@ impl<'a> Validator<'a> {
                 &self.prescription.document,
                 "No valid subject for ditto token.",
             )?;
-            Ok(MatchResult::Error(vec![Box::new(error)]))
+            Ok(MatchResult::Error(Box::new(error)))
         }
     }
 
@@ -391,7 +391,7 @@ impl<'a> Validator<'a> {
                         &self.prescription,
                         "Missing mandatory node.".to_string(),
                     )?;
-                    Ok(MatchResult::Error(vec![Box::new(error)]))
+                    Ok(MatchResult::Error(Box::new(error)))
                 }
             }
         } else {
@@ -425,7 +425,7 @@ impl<'a> Validator<'a> {
                     &self.prescription,
                     "Missing mandatory node.".to_string(),
                 )?;
-                Ok(MatchResult::Error(vec![Box::new(error)]))
+                Ok(MatchResult::Error(Box::new(error)))
             }
         }
     }
@@ -571,7 +571,7 @@ impl<'a> Validator<'a> {
         &self,
         parent_rx: &Node,
         parent_node: &Node,
-    ) -> HowserResult<ValidationProblems> {
+    ) -> HowserResult<Option<ValidationProblem>> {
         trace!("validate_sibling_inlines");
         let parent_rx_traverser = parent_rx
             .capabilities
@@ -609,7 +609,7 @@ impl<'a> Validator<'a> {
                         &self.prescription,
                         "Missing inline node.".to_string(),
                     )?;
-                    return Ok(Some(vec![Box::new(error)]));
+                    return Ok(Some(Box::new(error)));
                 }
             } else {
                 debug!("Missing node Error");
@@ -620,7 +620,7 @@ impl<'a> Validator<'a> {
                     &self.prescription,
                     "Missing inline node.".to_string(),
                 )?;
-                return Ok(Some(vec![Box::new(error)]));
+                return Ok(Some(Box::new(error)));
             }
         }
 
@@ -677,7 +677,11 @@ impl<'a> Validator<'a> {
         self.prescription.document.is_wildcard(rx)
     }
 
-    fn validate_node_content(&self, node: &Node, rx: &Node) -> HowserResult<ValidationProblems> {
+    fn validate_node_content(
+        &self,
+        node: &Node,
+        rx: &Node,
+    ) -> HowserResult<Option<ValidationProblem>> {
         let rx_getter = rx.capabilities
             .get
             .as_ref()
@@ -692,7 +696,7 @@ impl<'a> Validator<'a> {
         &self,
         node: &Node,
         rx: &Node,
-    ) -> HowserResult<ValidationProblems> {
+    ) -> HowserResult<Option<ValidationProblem>> {
         trace!("validate_link_node_content");
         let node_getter = node.capabilities
             .get
@@ -713,22 +717,22 @@ impl<'a> Validator<'a> {
 
         if ContentMatchPair::contains_mismatch(&url_match_pairs) {
             info!("Link destination Error");
-            Ok(Some(vec![Box::new(ContentError::new(
+            Ok(Some(Box::new(ContentError::new(
                 rx,
                 node,
                 &self.prescription,
                 &self.document,
                 url_match_pairs.clone(),
-            )?)]))
+            )?)))
         } else if ContentMatchPair::contains_mismatch(&title_match_pairs) {
             info!("Link title Error");
-            Ok(Some(vec![Box::new(ContentError::new(
+            Ok(Some(Box::new(ContentError::new(
                 rx,
                 node,
                 &self.prescription,
                 &self.document,
                 title_match_pairs.clone(),
-            )?)]))
+            )?)))
         } else {
             self.validate_sibling_inlines(rx, node)
         }
@@ -738,7 +742,7 @@ impl<'a> Validator<'a> {
         &self,
         node: &Node,
         rx: &Node,
-    ) -> HowserResult<ValidationProblems> {
+    ) -> HowserResult<Option<ValidationProblem>> {
         trace!("validate_general_node_content");
         let rx_getter = rx.capabilities
             .get
@@ -754,13 +758,13 @@ impl<'a> Validator<'a> {
 
         if ContentMatchPair::contains_mismatch(&match_pairs) {
             info!("Content Error");
-            return Ok(Some(vec![Box::new(ContentError::new(
+            return Ok(Some(Box::new(ContentError::new(
                 rx,
                 node,
                 &self.prescription,
                 &self.document,
                 match_pairs,
-            )?)]));
+            )?)));
         }
 
         Ok(None)
@@ -1001,7 +1005,8 @@ mod tests {
 
     #[test]
     fn test_literal_mixed_paragraph_mismatch() {
-        let rx_root = parse_document(&"*Compile* the code `let a = 12;` using `cargo build`.".to_string());
+        let rx_root =
+            parse_document(&"*Compile* the code `let a = 12;` using `cargo build`.".to_string());
         let doc_root = parse_document(&"*Compile* the code `let a = 12;`.".to_string());
         let rx = Document::new(&rx_root, None).into_prescription().unwrap();
         let doc = Document::new(&doc_root, None);
