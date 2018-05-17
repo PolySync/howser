@@ -601,7 +601,7 @@ impl<'a> Validator<'a> {
                         .ok_or(HowserError::CapabilityError)?
                         .next_sibling()?;
                 } else {
-                    info!("Inline match Error");
+                    debug!("Inline match Error");
                     let error = DocumentError::new(
                         &node,
                         &rx,
@@ -612,7 +612,7 @@ impl<'a> Validator<'a> {
                     return Ok(Some(vec![Box::new(error)]));
                 }
             } else {
-                info!("Missing node Error");
+                debug!("Missing node Error");
                 let error = DocumentError::new(
                     &parent_node,
                     &rx,
@@ -662,6 +662,7 @@ impl<'a> Validator<'a> {
     fn leaf_inline_matches(&self, node: &Node, rx: &Node) -> HowserResult<bool> {
         trace!("leaf_inline_matches");
         if !types_match(node, rx)? {
+            debug!("Type mismatch");
             return Ok(false);
         }
 
@@ -748,7 +749,7 @@ impl<'a> Validator<'a> {
             .as_ref()
             .ok_or(HowserError::CapabilityError)?;
         let node_content = node_getter.get_content()?;
-        let rx_content = rx_getter.get_content()?.trim_left().to_string();
+        let rx_content = rx_getter.get_content()?.to_string();
         let match_pairs = Self::match_contents(&node_content, &rx_content)?;
 
         if ContentMatchPair::contains_mismatch(&match_pairs) {
@@ -958,7 +959,7 @@ mod tests {
     use helpers::test::strategies::helpers::*;
 
     #[test]
-    fn test_literal_text_match() {
+    fn test_literal_paragraph_match() {
         let text = "The quick brown fox jumps over the dog.".to_string();
         let rx_root = parse_document(&text);
         let doc_root = parse_document(&text);
@@ -972,9 +973,36 @@ mod tests {
     }
 
     #[test]
-    fn test_literal_text_mismatch() {
+    fn test_literal_paragraph_mismatch() {
         let rx_root = parse_document(&"The quick brown fox jumps over the dog.".to_string());
         let doc_root = parse_document(&"The slow brown fox jumps over the dog.".to_string());
+        let rx = Document::new(&rx_root, None).into_prescription().unwrap();
+        let doc = Document::new(&doc_root, None);
+        let validator = Validator::new(rx, doc);
+
+        let report = validator.validate().unwrap();
+
+        assert!(report.is_some());
+    }
+
+    #[test]
+    fn test_literal_mixed_paragraph_match() {
+        let text = "*Compile* the code `let a = 12;` using `cargo build`.".to_string();
+        let rx_root = parse_document(&text);
+        let doc_root = parse_document(&text);
+        let rx = Document::new(&rx_root, None).into_prescription().unwrap();
+        let doc = Document::new(&doc_root, None);
+        let validator = Validator::new(rx, doc);
+
+        let report = validator.validate().unwrap();
+
+        assert!(report.is_none());
+    }
+
+    #[test]
+    fn test_literal_mixed_paragraph_mismatch() {
+        let rx_root = parse_document(&"*Compile* the code `let a = 12;` using `cargo build`.".to_string());
+        let doc_root = parse_document(&"*Compile* the code `let a = 12;`.".to_string());
         let rx = Document::new(&rx_root, None).into_prescription().unwrap();
         let doc = Document::new(&doc_root, None);
         let validator = Validator::new(rx, doc);
