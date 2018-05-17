@@ -1,15 +1,71 @@
 //! Abstractions for CMark Documents and Howser Templates.
 
+extern crate env_logger;
 extern crate regex;
 extern crate unicode_segmentation;
 
 use self::regex::Regex;
-use std::collections::HashMap;
-use std::cell::RefCell;
-use errors::{HowserError, HowserResult};
+use self::unicode_segmentation::UnicodeSegmentation;
+use constants::{DITTO_TOKEN, MANDATORY_PROMPT, OPTIONAL_PROMPT, PROMPT_PATTERN};
+use data::ElementType;
 use data::{MatchType, NodeData};
-use doogie::Node;
 use doogie::constants::*;
+use doogie::Node;
+use errors::{HowserError, HowserResult, SpecWarning};
+use std::cell::RefCell;
+use std::collections::HashMap;
+use validator::types_match;
+
+#[derive(Debug)]
+enum LookaheadType {
+    IntegratedLiteral(Node),
+    IntegratedOccupied((Node, MatchType)),
+    IntegratedVacant((Node, MatchType)),
+    DiscreteAnnotated((Node, MatchType)),
+    DiscreteLiteral(Node),
+    Ditto(Node),
+    List(Node),
+    Other(Option<Node>),
+}
+
+impl LookaheadType {
+    fn new(node: Option<Node>) -> HowserResult<Self> {
+        if let Some(node) = node {
+            let match_type = extract_annotation(&node)?;
+            match node.capabilities
+                .get
+                .as_ref()
+                .ok_or(HowserError::CapabilityError)?
+                .get_type()?
+            {
+                NodeType::CMarkNodeList => Ok(LookaheadType::List(node)),
+                NodeType::CMarkNodeParagraph
+                | NodeType::CMarkNodeBlockQuote
+                | NodeType::CMarkNodeCodeBlock => match match_type {
+                    MatchType::Repeatable => Ok(LookaheadType::Ditto(node)),
+                    MatchType::None => Ok(LookaheadType::IntegratedLiteral(node)),
+                    _ => match node.capabilities
+                        .traverse
+                        .as_ref()
+                        .ok_or(HowserError::CapabilityError)?
+                        .first_child()?
+                    {
+                        Some(_) => Ok(LookaheadType::IntegratedOccupied((node, match_type))),
+                        None => Ok(LookaheadType::IntegratedVacant((node, match_type))),
+                    },
+                },
+                NodeType::CMarkNodeHeading | NodeType::CMarkNodeItem => match match_type {
+                    MatchType::Repeatable => Ok(LookaheadType::Ditto(node)),
+                    MatchType::None => Ok(LookaheadType::DiscreteLiteral(node)),
+                    _ => Ok(LookaheadType::DiscreteAnnotated((node, match_type))),
+                },
+                _ => Ok(LookaheadType::Other(Some(node))),
+            }
+        } else {
+            Ok(LookaheadType::Other(None))
+        }
+    }
+}
 
 /// Wrapper for a Markdown document that stores extra metadata.
 pub struct Document<'a> {
@@ -29,10 +85,9 @@ impl<'a> Document<'a> {
 
     /// Transform this `Document` instance into a `Prescription`.
     pub fn into_prescription(self) -> HowserResult<Prescription<'a>> {
-        let document = subsume_comments(self)?;
-        process_child_prompts(&document.root, &document)?;
-
-        Ok(Prescription { document: document })
+        trace!("into_prescription");
+        process_child_block_elements(&self.root, &self)?;
+        Ok(Prescription { document: self })
     }
 
     /// Traverse the document tree and return the first node encountered of the type specified.
@@ -85,18 +140,6 @@ impl<'a> Document<'a> {
         Ok(node_data.is_wildcard)
     }
 
-    /// Set the comment string for a node in this document.
-    fn set_comment(&self, node: &Node, comment: &str) -> Result<&Self, HowserError> {
-        if let Some(ref getter) = node.capabilities.get {
-            let id = getter.get_id()?;
-            let mut data = self.data.borrow_mut();
-            let node_data = data.entry(id).or_insert(NodeData::new());
-            node_data.comment = Some(String::from(comment));
-        }
-
-        Ok(self)
-    }
-
     /// Set the wildcard status for a node in this document.
     fn set_is_wildcard(&self, node: &Node, state: bool) -> Result<&Self, HowserError> {
         if let Some(ref getter) = node.capabilities.get {
@@ -129,172 +172,447 @@ pub struct Prescription<'a> {
     pub document: Document<'a>,
 }
 
-mod helpers {
-    use super::unicode_segmentation::UnicodeSegmentation;
-    use super::NodeType;
-
-    /// Sequenceable node types are those which can be used as a pattern in the prescription
-    /// that can match against an arbitrary sequence of nodes of the same type in a document.
-    pub fn node_type_is_sequencable(node_type: &NodeType) -> bool {
-        match *node_type {
-            NodeType::CMarkNodeParagraph
-            | NodeType::CMarkNodeHeading
-            | NodeType::CMarkNodeItem
-            | NodeType::CMarkNodeList
-            | NodeType::CMarkNodeCodeBlock => true,
-            _ => false,
-        }
-    }
-
-    /// A circumstantial node is one that may or may not appear in the document due to its presence
-    /// only being necessary if an optional child node is present.
-    pub fn node_type_is_circumstantial(node_type: &NodeType) -> bool {
-        match *node_type {
-            NodeType::CMarkNodeList => true,
-            _ => false,
-        }
-    }
-
-    pub fn reverse(s: &String) -> String {
-        let iter = UnicodeSegmentation::graphemes(s.as_str(), true);
-        iter.rev().collect::<String>()
+/// A circumstantial node is one that may or may not appear in the document due to its presence
+/// only being necessary if an optional child node is present.
+pub fn node_type_is_circumstantial(node: &Node) -> HowserResult<bool> {
+    let node_type = node.capabilities
+        .get
+        .as_ref()
+        .ok_or(HowserError::CapabilityError)?
+        .get_type()?;
+    match node_type {
+        NodeType::CMarkNodeList => Ok(true),
+        _ => Ok(false),
     }
 }
 
-/// Walk through the document removing comment nodes and transforming their content into
-/// metadata linked to the related node.
-fn subsume_comments(document: Document) -> HowserResult<Document> {
-    {
-        let traverser = document
-            .root
-            .capabilities
-            .traverse
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?;
-
-        for (node, event) in traverser.iter() {
-            let getter = node.capabilities
-                .get
-                .as_ref()
-                .ok_or(HowserError::CapabilityError)?;
-
-            match (event, getter.get_type()?) {
-                (IterEventType::Exit, NodeType::CMarkNodeHtmlInline)
-                | (IterEventType::Enter, NodeType::CMarkNodeHtmlInline) => {
-                    subsume_comment(&node, &document)?;
-                }
-                _ => continue,
-            }
-        }
-    }
-
-    Ok(document)
+pub fn reverse(s: &String) -> String {
+    let iter = UnicodeSegmentation::graphemes(s.as_str(), true);
+    iter.rev().collect::<String>()
 }
 
-/// Remove a comment node from that document and add its content to the metadata of the node
-/// it is commenting.
-fn subsume_comment(commenter: &Node, document: &Document) -> HowserResult<()> {
-    let commenter_traverser = commenter
+/// Extract and transform the block-level Rx prompts from the document content into
+/// contextualized metadata on the match types of those elements.
+fn process_child_block_elements(parent: &Node, document: &Document) -> HowserResult<()> {
+    trace!("process_child_block_elements");
+    let mut current_child = parent
         .capabilities
         .traverse
         .as_ref()
-        .ok_or(HowserError::CapabilityError)?;
+        .ok_or(HowserError::CapabilityError)?
+        .first_child()?;
 
-    if let Some(commentee) = commenter_traverser
-        .prev_sibling()?
-        .or(commenter_traverser.parent()?)
-    {
-        let commenter_getter = commenter
-            .capabilities
-            .get
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?;
-        let commenter_mutator = commenter
-            .capabilities
-            .mutate
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?;
-
-        let comment = commenter_getter.get_content()?;
-        document.set_comment(&commentee, &comment)?;
-
-        commenter_mutator.unlink();
+    if let Some(ref node) = current_child {
+        match ElementType::determine(node)? {
+            ElementType::InlineContainer | ElementType::InlineLeaf => {
+                debug!("Returning from inline element");
+                return Ok(());
+            }
+            _ => (),
+        }
     }
 
-    Ok(())
-}
+    while let Some(l1_node) = current_child {
+        let mut l2 = LookaheadType::Other(None);
+        let mut l3 = LookaheadType::Other(None);
 
-/// Extract and transform the element-level Rx prompts from the document content into
-/// contextualized metadata on the match types of those nodes.
-fn process_child_prompts(node: &Node, document: &Document) -> HowserResult<()> {
-    {
-        let traverser = node.capabilities
+        if let Some(l2_node) = l1_node
+            .capabilities
             .traverse
             .as_ref()
-            .ok_or(HowserError::CapabilityError)?;
-        let mut child = traverser.first_child()?;
-
-        while let Some(sibling) = child {
-            let sibling_trav = sibling
-                .capabilities
-                .traverse
-                .as_ref()
-                .ok_or(HowserError::CapabilityError)?;
-
-            let mut node_type: NodeType;
-            if let Some(ref getter) = sibling.capabilities.get {
-                node_type = getter.get_type()?;
+            .ok_or(HowserError::CapabilityError)?
+            .next_sibling()?
+        {
+            if types_match(&l1_node, &l2_node)? {
+                match l1_node
+                    .capabilities
+                    .get
+                    .as_ref()
+                    .ok_or(HowserError::CapabilityError)?
+                    .get_type()?
+                {
+                    NodeType::CMarkNodeHeading | NodeType::CMarkNodeItem => {
+                        if let Some(l3_node) = l2_node
+                            .capabilities
+                            .traverse
+                            .as_ref()
+                            .ok_or(HowserError::CapabilityError)?
+                            .next_sibling()?
+                        {
+                            if types_match(&l1_node, &l3_node)? {
+                                l3 = LookaheadType::new(Some(l3_node))?;
+                            } else {
+                                l3 = LookaheadType::Other(Some(l3_node));
+                            }
+                        }
+                    }
+                    _ => {
+                        l3 = LookaheadType::Other(l2_node
+                            .capabilities
+                            .traverse
+                            .as_ref()
+                            .ok_or(HowserError::CapabilityError)?
+                            .next_sibling()?);
+                    }
+                }
+                l2 = LookaheadType::new(Some(l2_node))?;
             } else {
-                return Err(HowserError::CapabilityError);
+                l2 = LookaheadType::Other(Some(l2_node));
             }
+        }
+        let l1 = LookaheadType::new(Some(l1_node))?;
 
-            if helpers::node_type_is_sequencable(&node_type)
-                && !(node_type == NodeType::CMarkNodeList)
-            {
-                process_match_token(&sibling, &document)?;
-            }
+        debug!("Lookahead Sequence: {:?}, {:?}, {:?}", l1, l2, l3);
 
-            process_child_prompts(&sibling, document)?;
-
-            if helpers::node_type_is_circumstantial(&node_type) {
-                process_circumstantial_node(&sibling, document)?;
-            }
-
-            child = sibling_trav.next_sibling()?;
+        match (l1, l2, l3) {
+            (
+                LookaheadType::DiscreteAnnotated((annotation, match_type)),
+                LookaheadType::DiscreteLiteral(target),
+                LookaheadType::Ditto(ditto)
+            ) => {
+                process_child_block_elements(&target, document)?;
+                document.set_match_type(&target, match_type)?;
+                document.set_match_type(&ditto, MatchType::Repeatable)?;
+                current_child = ditto.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.next_sibling()?;
+                annotation.capabilities.mutate.as_ref().ok_or(HowserError::CapabilityError)?.unlink();
+            },
+            (
+                LookaheadType::DiscreteAnnotated((annotation, match_type)),
+                LookaheadType::DiscreteLiteral(target),
+                LookaheadType::Other(next)
+            ) => {
+                process_child_block_elements(&target, document)?;
+                document.set_match_type(&target, match_type)?;
+                annotation.capabilities.mutate.as_ref().ok_or(HowserError::CapabilityError)?.unlink();
+                current_child = next;
+            },
+            (
+                LookaheadType::DiscreteAnnotated((annotation, match_type)),
+                LookaheadType::Ditto(ditto),
+                LookaheadType::Other(next)
+            ) => {
+                document.set_match_type(&annotation, match_type)?;
+                document.set_match_type(&ditto, MatchType::Repeatable)?;
+                document.set_is_wildcard(&annotation, true)?;
+                current_child = next;
+            },
+            (
+                LookaheadType::DiscreteLiteral(target),
+                LookaheadType::Ditto(ditto),
+                _
+            ) => {
+                process_child_block_elements(&target, document)?;
+                document.set_match_type(&ditto, MatchType::Repeatable)?;
+                current_child = ditto.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.next_sibling()?;
+            },
+            (
+                LookaheadType::DiscreteAnnotated((target, match_type)),
+                LookaheadType::Other(next),
+                _
+            ) => {
+                document.set_match_type(&target, match_type)?;
+                document.set_is_wildcard(&target, true)?;
+                current_child = next;
+            },
+            (
+                LookaheadType::DiscreteLiteral(target),
+                LookaheadType::Other(next),
+                _
+            ) => {
+                process_child_block_elements(&target, document)?;
+                current_child = next;
+            },
+            (
+                LookaheadType::IntegratedVacant((target, match_type)),
+                LookaheadType::Ditto(ditto),
+                LookaheadType::Other(next)
+            ) => {
+                document.set_match_type(&target, match_type)?;
+                document.set_match_type(&ditto, MatchType::Repeatable)?;
+                document.set_is_wildcard(&target, true)?;
+                current_child = next;
+            },
+            (
+                LookaheadType::IntegratedOccupied((target, match_type)),
+                LookaheadType::Ditto(ditto),
+                LookaheadType::Other(next)
+            ) => {
+                process_child_block_elements(&target, document)?;
+                document.set_match_type(&target, match_type)?;
+                document.set_match_type(&ditto, MatchType::Repeatable)?;
+                current_child = next;
+            },
+            (
+                LookaheadType::IntegratedLiteral(target),
+                LookaheadType::Ditto(ditto),
+                LookaheadType::Other(next)
+            ) => {
+                process_child_block_elements(&target, document)?;
+                document.set_match_type(&ditto, MatchType::Repeatable)?;
+                current_child = next;
+            },
+            (
+                LookaheadType::IntegratedVacant((target, match_type)),
+                LookaheadType::Other(next),
+                _
+            ) => {
+                document.set_match_type(&target, match_type)?;
+                document.set_is_wildcard(&target, true)?;
+                current_child = next;
+            },
+            (
+                LookaheadType::IntegratedOccupied((target, match_type)),
+                LookaheadType::Other(next),
+                _
+            ) => {
+                process_child_block_elements(&target, document)?;
+                document.set_match_type(&target, match_type)?;
+                current_child = next;
+            },
+            (
+                LookaheadType::IntegratedLiteral(target),
+                LookaheadType::Other(next),
+                _
+            ) => {
+                process_child_block_elements(&target, document)?;
+                current_child = next;
+            },
+            (
+                LookaheadType::List(target),
+                LookaheadType::Other(next),
+                _
+            ) => {
+                process_child_block_elements(&target, document)?;
+                annotate_list_element(&target, document)?;
+                current_child = next;
+            },
+            (LookaheadType::Ditto(node), _, _) => {
+                return Err(HowserError::PrescriptionError(SpecWarning::new(&node, document, "An element with a Ditto prompt must be preceded by an element of the same type.")?))
+            },
+            _ => return Err(HowserError::RuntimeError("Unexpected Lookahead Encountered".to_string()))
         }
     }
 
     Ok(())
 }
 
-/// Strip the match token from a node and add it as metadata.
-fn process_match_token(node: &Node, document: &Document) -> HowserResult<()> {
-    let getter = node.capabilities
+fn extract_annotation(node: &Node) -> HowserResult<MatchType> {
+    match node.capabilities
         .get
         .as_ref()
-        .ok_or(HowserError::CapabilityError)?;
-    let mut match_token = String::new();
-
-    if let Some(ref token_node) = get_match_token_node(node)? {
-        match_token = subsume_token_node(node, token_node, document)?;
-    } else if getter.get_type()? == NodeType::CMarkNodeCodeBlock {
-        match_token = subsume_code_fence_token(node, document)?;
+        .ok_or(HowserError::CapabilityError)?
+        .get_type()?
+    {
+        NodeType::CMarkNodeParagraph => extract_paragraph_match_token(node),
+        NodeType::CMarkNodeBlockQuote => extract_block_quote_match_token(node),
+        NodeType::CMarkNodeCodeBlock => extract_code_block_match_token(node),
+        NodeType::CMarkNodeHeading => extract_heading_match_token(node),
+        NodeType::CMarkNodeItem => extract_item_match_token(node),
+        _ => Ok(MatchType::None),
     }
-    let match_type = match match_token.as_ref() {
-        ::constants::MANDATORY_PROMPT => MatchType::Mandatory,
-        ::constants::OPTIONAL_PROMPT => MatchType::Optional,
-        ::constants::DITTO_TOKEN | ::constants::U_DITTO_TOKEN => MatchType::Repeatable,
-        _ => MatchType::Mandatory,
-    };
-    document.set_match_type(node, match_type)?;
+}
 
-    Ok(())
+fn extract_paragraph_match_token(node: &Node) -> HowserResult<MatchType> {
+    if let Some(text_node) = node.capabilities
+        .traverse
+        .as_ref()
+        .ok_or(HowserError::CapabilityError)?
+        .first_child()?
+    {
+        let softbreak = text_node
+            .capabilities
+            .traverse
+            .as_ref()
+            .ok_or(HowserError::CapabilityError)?
+            .next_sibling()?;
+        if let Some(ref node) = softbreak {
+            if node.capabilities
+                .get
+                .as_ref()
+                .ok_or(HowserError::CapabilityError)?
+                .get_type()? != NodeType::CMarkNodeSoftbreak
+            {
+                return Ok(MatchType::None);
+            }
+        }
+        if text_node
+            .capabilities
+            .get
+            .as_ref()
+            .ok_or(HowserError::CapabilityError)?
+            .get_type()? != NodeType::CMarkNodeText
+        {
+            return Ok(MatchType::None);
+        }
+        let text = text_node
+            .capabilities
+            .get
+            .as_ref()
+            .ok_or(HowserError::CapabilityError)?
+            .get_content()?;
+        let (token, content) = extract_match_type(&text)?;
+        match (token == MatchType::None, content.is_empty()) {
+            (false, true) => {
+                text_node
+                    .capabilities
+                    .mutate
+                    .as_ref()
+                    .ok_or(HowserError::CapabilityError)?
+                    .unlink();
+
+                if let Some(node) = softbreak {
+                    node.capabilities
+                        .mutate
+                        .as_ref()
+                        .ok_or(HowserError::CapabilityError)?
+                        .unlink();
+                }
+
+                Ok(token)
+            }
+            _ => Ok(MatchType::None),
+        }
+    } else {
+        Ok(MatchType::None)
+    }
+}
+
+fn extract_block_quote_match_token(node: &Node) -> HowserResult<MatchType> {
+    if let Some(paragraph) = node.capabilities
+        .traverse
+        .as_ref()
+        .ok_or(HowserError::CapabilityError)?
+        .first_child()?
+    {
+        if paragraph
+            .capabilities
+            .get
+            .as_ref()
+            .ok_or(HowserError::CapabilityError)?
+            .get_type()? == NodeType::CMarkNodeParagraph
+        {
+            let token = extract_paragraph_match_token(&paragraph);
+            if paragraph
+                .capabilities
+                .traverse
+                .as_ref()
+                .ok_or(HowserError::CapabilityError)?
+                .first_child()?
+                .is_none()
+            {
+                paragraph
+                    .capabilities
+                    .mutate
+                    .as_ref()
+                    .ok_or(HowserError::CapabilityError)?
+                    .unlink();
+            }
+            token
+        } else {
+            Ok(MatchType::None)
+        }
+    } else {
+        Ok(MatchType::None)
+    }
+}
+
+fn extract_code_block_match_token(node: &Node) -> HowserResult<MatchType> {
+    let info = node.capabilities
+        .get
+        .as_ref()
+        .ok_or(HowserError::CapabilityError)?
+        .get_fence_info()?;
+    let (match_type, content) = extract_match_type(&info)?;
+    if match_type != MatchType::None {
+        node.capabilities
+            .set
+            .as_ref()
+            .ok_or(HowserError::CapabilityError)?
+            .set_fence_info(&content)?;
+        Ok(match_type)
+    } else {
+        Ok(MatchType::None)
+    }
+}
+
+fn extract_heading_match_token(node: &Node) -> HowserResult<MatchType> {
+    if let Some(text) = node.capabilities
+        .traverse
+        .as_ref()
+        .ok_or(HowserError::CapabilityError)?
+        .first_child()?
+    {
+        if text.capabilities
+            .traverse
+            .as_ref()
+            .ok_or(HowserError::CapabilityError)?
+            .next_sibling()?
+            .is_none()
+        {
+            let getter = text.capabilities
+                .get
+                .as_ref()
+                .ok_or(HowserError::CapabilityError)?;
+            if getter.get_type()? == NodeType::CMarkNodeText {
+                let (match_type, content) = extract_match_type(&getter.get_content()?)?;
+                if match_type != MatchType::None && content.is_empty() {
+                    text.capabilities
+                        .mutate
+                        .as_ref()
+                        .ok_or(HowserError::CapabilityError)?
+                        .unlink();
+                    Ok(match_type)
+                } else {
+                    Ok(MatchType::None)
+                }
+            } else {
+                Ok(MatchType::None)
+            }
+        } else {
+            Ok(MatchType::None)
+        }
+    } else {
+        Ok(MatchType::None)
+    }
+}
+
+fn extract_item_match_token(node: &Node) -> HowserResult<MatchType> {
+    if let Some(paragraph) = node.capabilities
+        .traverse
+        .as_ref()
+        .ok_or(HowserError::CapabilityError)?
+        .first_child()?
+    {
+        if paragraph
+            .capabilities
+            .get
+            .as_ref()
+            .ok_or(HowserError::CapabilityError)?
+            .get_type()? == NodeType::CMarkNodeParagraph
+        {
+            let token = extract_paragraph_match_token(&paragraph)?;
+            if token != MatchType::None {
+                paragraph
+                    .capabilities
+                    .mutate
+                    .as_ref()
+                    .ok_or(HowserError::CapabilityError)?
+                    .unlink();
+            }
+
+            Ok(token)
+        } else {
+            Ok(MatchType::None)
+        }
+    } else {
+        Ok(MatchType::None)
+    }
 }
 
 /// Sets the match type of a circumstantial node based on the match types of its children.
 ///
 /// If any children are marked Mandatory, then the node is also mandatory. Else, it is optional.
-fn process_circumstantial_node(node: &Node, document: &Document) -> HowserResult<()> {
+fn annotate_list_element(node: &Node, document: &Document) -> HowserResult<()> {
     document.set_match_type(node, MatchType::Optional)?;
     let traverser = node.capabilities
         .traverse
@@ -317,283 +635,148 @@ fn process_circumstantial_node(node: &Node, document: &Document) -> HowserResult
     Ok(())
 }
 
-/// Prune a match token node from the tree and add it as metadata to the node it is annotating.
-fn subsume_token_node(node: &Node, token_node: &Node, document: &Document) -> HowserResult<String> {
-    let traverser = node.capabilities
-        .traverse
-        .as_ref()
-        .ok_or(HowserError::CapabilityError)?;
-    let token_node_getter = token_node
-        .capabilities
-        .get
-        .as_ref()
-        .ok_or(HowserError::CapabilityError)?;
-    let token_node_setter = token_node
-        .capabilities
-        .set
-        .as_ref()
-        .ok_or(HowserError::CapabilityError)?;
-    let token_node_content = token_node_getter.get_content()?;
-    let (match_token, token_node_content) = lstrip_match_prompt(&token_node_content)?;
-    token_node_setter.set_content(&token_node_content)?;
-    prune_token_node_from(node)?;
-    if traverser.first_child()?.is_none() {
-        document.set_is_wildcard(node, true)?;
-    }
-
-    Ok(match_token)
-}
-
-/// Strip the match token from the info string of a code fence node and add it as metadata.
-fn subsume_code_fence_token(node: &Node, document: &Document) -> HowserResult<String> {
-    let getter = node.capabilities
-        .get
-        .as_ref()
-        .ok_or(HowserError::CapabilityError)?;
-    let setter = node.capabilities
-        .set
-        .as_ref()
-        .ok_or(HowserError::CapabilityError)?;
-
-    let reverse_info = helpers::reverse(&getter.get_fence_info()?);
-    let (token, stripped_rev_info) = lstrip_match_prompt(&reverse_info)?;
-    setter.set_fence_info(&helpers::reverse(&stripped_rev_info))?;
-    if getter.get_content()?.is_empty() {
-        document.set_is_wildcard(node, true)?;
-    }
-
-    Ok(token)
-}
-
 /// Strips a prompt from the beginning of a string and returns the prompt and the stripped string.
 ///
 /// If the string does not begin with a prompt, a blank string and the origininal string are returned.
-fn lstrip_match_prompt(content: &String) -> HowserResult<(String, String)> {
-    let pattern = Regex::new(::constants::PROMPT_PATTERN)?;
+fn extract_match_type(content: &String) -> HowserResult<(MatchType, String)> {
+    let pattern = Regex::new(PROMPT_PATTERN)?;
 
     if let Some(location) = pattern.find(content.trim_left()) {
         if location.start() == 0 {
             let prompt = location.as_str();
             let tail = pattern.replace(content, "");
-            Ok((prompt.to_string(), tail.to_string()))
+            let match_type = match prompt {
+                MANDATORY_PROMPT => MatchType::Mandatory,
+                OPTIONAL_PROMPT => MatchType::Optional,
+                DITTO_TOKEN => MatchType::Repeatable,
+                _ => MatchType::None,
+            };
+
+            Ok((match_type, tail.to_string()))
         } else {
-            Ok((String::new(), content.clone()))
+            Ok((MatchType::None, content.clone()))
         }
     } else {
-        Ok((String::new(), content.clone()))
-    }
-}
-
-fn prune_token_node_from(node: &Node) -> HowserResult<()> {
-    let getter = node.capabilities
-        .get
-        .as_ref()
-        .ok_or(HowserError::CapabilityError)?;
-    let traverser = node.capabilities
-        .traverse
-        .as_ref()
-        .ok_or(HowserError::CapabilityError)?;
-
-    match getter.get_type()? {
-        NodeType::CMarkNodeParagraph | NodeType::CMarkNodeHeading => {
-            if let Some(meta_node) = traverser.first_child()? {
-                let meta_getter = meta_node
-                    .capabilities
-                    .get
-                    .as_ref()
-                    .ok_or(HowserError::CapabilityError)?;
-                let meta_content = meta_getter.get_content()?;
-                if meta_getter.get_type()? == NodeType::CMarkNodeText && meta_content.is_empty() {
-                    let mutator = meta_node
-                        .capabilities
-                        .mutate
-                        .as_ref()
-                        .ok_or(HowserError::CapabilityError)?;
-                    mutator.unlink();
-                }
-            }
-        }
-        NodeType::CMarkNodeItem => {
-            if let Some(inner_node) = traverser.first_child()? {
-                let inner_getter = inner_node
-                    .capabilities
-                    .get
-                    .as_ref()
-                    .ok_or(HowserError::CapabilityError)?;
-                if inner_getter.get_type()? == NodeType::CMarkNodeParagraph {
-                    let inner_traverser = inner_node
-                        .capabilities
-                        .traverse
-                        .as_ref()
-                        .ok_or(HowserError::CapabilityError)?;
-                    if let Some(meta_node) = inner_traverser.first_child()? {
-                        let meta_getter = meta_node
-                            .capabilities
-                            .get
-                            .as_ref()
-                            .ok_or(HowserError::CapabilityError)?;
-                        let meta_content = meta_getter.get_content()?;
-                        if meta_getter.get_type()? == NodeType::CMarkNodeText
-                            && meta_content.is_empty()
-                        {
-                            let mutator = meta_node
-                                .capabilities
-                                .mutate
-                                .as_ref()
-                                .ok_or(HowserError::CapabilityError)?;
-                            mutator.unlink();
-                        }
-                        if inner_traverser.first_child()?.is_none() {
-                            let mutator = inner_node
-                                .capabilities
-                                .mutate
-                                .as_ref()
-                                .ok_or(HowserError::CapabilityError)?;
-                            mutator.unlink();
-                        }
-                    }
-                }
-            }
-        }
-        _ => (),
-    }
-
-    Ok(())
-}
-
-/// Find the inner node that contains the match token for an outer node.
-fn get_match_token_node(node: &Node) -> HowserResult<Option<Node>> {
-    let getter = node.capabilities
-        .get
-        .as_ref()
-        .ok_or(HowserError::CapabilityError)?;
-    let traverser = node.capabilities
-        .traverse
-        .as_ref()
-        .ok_or(HowserError::CapabilityError)?;
-
-    if let Some(match_node) = traverser.first_child()? {
-        let mut match_node_type = NodeType::CMarkNodeNone;
-        if let Some(ref getter) = match_node.capabilities.get {
-            match_node_type = getter.get_type()?;
-        }
-        match getter.get_type()? {
-            NodeType::CMarkNodeParagraph | NodeType::CMarkNodeHeading => {
-                if match_node_type == NodeType::CMarkNodeText {
-                    Ok(Some(match_node))
-                } else {
-                    Ok(None)
-                }
-            }
-            NodeType::CMarkNodeItem => {
-                if match_node_type == NodeType::CMarkNodeParagraph {
-                    let paragraph_traverser = match_node
-                        .capabilities
-                        .traverse
-                        .as_ref()
-                        .ok_or(HowserError::CapabilityError)?;
-                    if let Some(text_node) = paragraph_traverser.first_child()? {
-                        let mut node_type = NodeType::CMarkNodeNone;
-                        if let Some(ref getter) = text_node.capabilities.get {
-                            node_type = getter.get_type()?;
-                        }
-                        if node_type == NodeType::CMarkNodeText {
-                            Ok(Some(text_node))
-                        } else {
-                            Ok(None)
-                        }
-                    } else {
-                        Ok(None)
-                    }
-                } else {
-                    Ok(None)
-                }
-            }
-            NodeType::CMarkNodeCodeBlock => Ok(None),
-            _ => Err(HowserError::RuntimeError(String::from(
-                "Expected sequencable node type.",
-            ))),
-        }
-    } else {
-        Ok(None)
+        Ok((MatchType::None, content.clone()))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use proptest::prelude::*;
-    use helpers::test::strategies::cmark::arb_paragraph_match;
-    use helpers::test::strategies::content::prompts::{content_prompt, literal_prompt};
-    use helpers::test::strategies::helpers::serialize_match_seq;
-    use data::{MatchType, PromptToken};
-    use doogie::constants::NodeType;
-    use doogie::parse_document;
+    use super::process_child_block_elements;
     use super::Document;
-    use super::{process_child_prompts, subsume_comments};
+    use data::{MatchType, PromptToken};
+    use doogie::parse_document;
+    use helpers::test::strategies::cmark::arb_paragraph_match;
+    use helpers::test::strategies::helpers::serialize_match_seq;
+    use proptest::prelude::*;
 
     proptest!{
         #[test]
-        fn test_subsume_comments(ref paragraph in arb_paragraph_match(1..10)) {
-            let &(ref matches, ref comment) = paragraph;
-            let (rx_content, _) = serialize_match_seq(matches);
+        fn test_block_level_paragraph_annotations_are_processed(
+                ref paragraph in arb_paragraph_match(1..10),
+                ref prompt in prop_oneof![
+                    Just(PromptToken::Mandatory),
+                    Just(PromptToken::Optional)]) {
+            let (template_content, _) = serialize_match_seq(paragraph);
+            let mut test_template = template_content.clone();
+            test_template.insert_str(0, &format!("{}\n", prompt.to_string()));
+            let root = parse_document(&test_template);
+            let document = Document::new(&root, None);
 
-            let mut test_content = rx_content.clone();
-            if let &Some(ref c) = comment {
-                test_content.push_str(&c.to_string());
-            }
+            process_child_block_elements(&document.root, &document).unwrap();
 
-            let document_root = parse_document(&test_content);
-
-            let document = Document::new(&document_root, None);
-            let document = subsume_comments(document).unwrap();
-
-            if let Some(result_paragraph) = document
-                .first_of_type(NodeType::CMarkNodeText)
-                .unwrap() {
-                let getter = result_paragraph.capabilities.get.as_ref().unwrap();
-                let result_content = getter.get_content().unwrap();
-                assert_eq!(rx_content, result_content);
+            if let Some(paragraph) = document.root.capabilities.traverse.as_ref().unwrap().first_child().unwrap() {
+                let match_type = document.get_match_type(&paragraph).unwrap();
+                match prompt {
+                    PromptToken::Mandatory => assert_eq!(match_type, MatchType::Mandatory),
+                    PromptToken::Optional => assert_eq!(match_type, MatchType::Optional),
+                    _ => ()
+                }
+                assert!(! document.is_wildcard(&paragraph).unwrap());
+                if let Some(text) = paragraph.capabilities.traverse.as_ref().unwrap().first_child().unwrap() {
+                    let processed_content = text.capabilities.get.as_ref().unwrap().get_content().unwrap();
+                    assert_eq!(processed_content, template_content);
+                } else {
+                    panic!("No text node found");
+                }
             } else {
-                assert!(false, "Paragraph node not found");
+                panic!("No paragraph node found");
             }
         }
 
         #[test]
-        fn test_subsume_prompts(
-                ref paragraph in arb_paragraph_match(1..10),
-                ref prompt in prop::option::of(content_prompt()),
-                ref literal in literal_prompt(1..10)) {
-            let &(ref matches, _) = paragraph;
-            let (mut template_content, _) = serialize_match_seq(matches);
-            template_content.insert_str(0, &literal.to_string());
-            let mut test_template = template_content.clone();
-            if let &Some(ref prompt) = prompt {
-                test_template.insert_str(0, &prompt.to_string());
-            }
-
-            let root = parse_document(&test_template);
-
+        fn test_wildcard_paragraphs_are_processed(ref prompt in prop_oneof![Just(PromptToken::Mandatory),Just(PromptToken::Optional)]) {
+            let template_content = prompt.to_string();
+            let root = parse_document(&template_content);
             let document = Document::new(&root, None);
-            process_child_prompts(&document.root, &document).unwrap();
 
-            if let Some(paragraph_node) = document
-                .first_of_type(NodeType::CMarkNodeParagraph)
-                .unwrap() {
-                let match_type = document.get_match_type(&paragraph_node).unwrap();
-                if let Some(text_node) = document.first_of_type(NodeType::CMarkNodeText).unwrap() {
-                    let getter = text_node.capabilities.get.as_ref().unwrap();
-                    let content = getter.get_content().unwrap();
-                    assert_eq!(content, template_content, "Subsumed content(Left) did not match the original content(Right)");
-                    match prompt {
-                        &Some(PromptToken::Mandatory) | &None => assert_eq!(match_type, MatchType::Mandatory, "Match type should have been mandatory"),
-                        &Some(PromptToken::Optional) => assert_eq!(match_type, MatchType::Optional, "Match type should have been optional"),
-                        _ => ()
-                    }
+            process_child_block_elements(&document.root, &document).unwrap();
+
+            if let Some(paragraph) = document.root.capabilities.traverse.as_ref().unwrap().first_child().unwrap() {
+                let match_type = document.get_match_type(&paragraph).unwrap();
+                match prompt {
+                    PromptToken::Mandatory => assert_eq!(match_type, MatchType::Mandatory),
+                    PromptToken::Optional => assert_eq!(match_type, MatchType::Optional),
+                    _ => ()
+                }
+                assert!(document.is_wildcard(&paragraph).unwrap());
+                assert!(paragraph.capabilities.traverse.as_ref().unwrap().first_child().unwrap().is_none());
+            } else {
+                panic!("No paragraph node found");
+            }
+        }
+
+        #[test]
+        fn test_literal_paragraphs_are_processed(ref paragraph in arb_paragraph_match(2..10)) {
+            let (template_content, _) = serialize_match_seq(paragraph);
+            let root = parse_document(&template_content);
+            let document = Document::new(&root, None);
+
+            process_child_block_elements(&root, &document).unwrap();
+
+            if let Some(paragraph) = document.root.capabilities.traverse.as_ref().unwrap().first_child().unwrap() {
+                assert_eq!(document.get_match_type(&paragraph).unwrap(), MatchType::Mandatory);
+                assert!(! document.is_wildcard(&paragraph).unwrap());
+                if let Some(text) = paragraph.capabilities.traverse.as_ref().unwrap().first_child().unwrap() {
+                    let processed_content = text.capabilities.get.as_ref().unwrap().get_content().unwrap();
+                    assert_eq!(processed_content, template_content);
                 } else {
-                    panic!("Couldn't find Text Node");
+                    panic!("No text node found");
                 }
             } else {
-                panic!("Couldn't find paragraph node");
+                panic!("No paragraph node found");
+            }
+        }
+
+        #[test]
+        fn test_literal_repeatable_paragraphs_are_processed(ref paragraph in arb_paragraph_match(2..10)) {
+            let (template_content, _) = serialize_match_seq(paragraph);
+            let mut test_template = template_content.clone();
+            test_template.push_str("\n\n-\"\"-");
+
+            let root = parse_document(&test_template);
+            let document = Document::new(&root, None);
+
+            process_child_block_elements(&root, &document).unwrap();
+
+            if let Some(paragraph) = document.root.capabilities.traverse.as_ref().unwrap().first_child().unwrap() {
+                assert_eq!(document.get_match_type(&paragraph).unwrap(), MatchType::Mandatory);
+                assert!(! document.is_wildcard(&paragraph).unwrap());
+                let traverser = paragraph.capabilities.traverse.as_ref().unwrap();
+                if let Some(text) = traverser.first_child().unwrap() {
+                    let processed_content = text.capabilities.get.as_ref().unwrap().get_content().unwrap();
+                    assert_eq!(processed_content, template_content);
+                } else {
+                    panic!("No text node found");
+                }
+                if let Some(ditto) = traverser.next_sibling().unwrap() {
+                    assert_eq!(document.get_match_type(&ditto).unwrap(), MatchType::Repeatable);
+                } else {
+                    panic!("No Ditto Node found");
+                }
+            } else {
+                panic!("No paragraph node found");
             }
         }
     }

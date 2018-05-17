@@ -6,16 +6,15 @@ extern crate env_logger;
 extern crate howser;
 
 use clap::{App, Arg, ArgMatches, SubCommand};
-use howser::document::Document;
-use howser::errors::{HowserError, HowserResult, ValidationReport, ValidationResult};
-use std::fs::File;
-use std::error::Error;
-use std::io::prelude::*;
-use howser::validator::Validator;
-use howser::reporters::{make_cli_report, CLIOption};
-use howser::checker::{SpecChecker, SpecRule};
-use howser::helpers::cli::ShellText;
 use doogie::parse_document;
+use howser::document::Document;
+use howser::errors::{HowserError, HowserResult, ValidationProblems, ValidationResult};
+use howser::helpers::cli::ShellText;
+use howser::reporters::{make_cli_report, CLIOption};
+use howser::validator::Validator;
+use std::error::Error;
+use std::fs::File;
+use std::io::prelude::*;
 
 fn main() {
     env_logger::init();
@@ -46,9 +45,9 @@ fn main() {
 
     options.push(CLIOption::VerboseMode(matches.is_present("verbose")));
     match report {
-        Ok(report) => {
-            let is_valid = report.errors.is_none() && report.warnings.is_none();
-            let validation_result = ValidationResult::new(report, is_valid);
+        Ok(problems) => {
+            let is_valid = problems.is_none();
+            let validation_result = ValidationResult::new(problems, is_valid);
             let cli_report = make_cli_report(&validation_result, options);
             println!("{}", cli_report);
             std::process::exit(0);
@@ -99,7 +98,7 @@ fn make_app<'a, 'b>() -> App<'a, 'b> {
         )
 }
 
-fn validate(args: &ArgMatches) -> HowserResult<ValidationReport> {
+fn validate(args: &ArgMatches) -> HowserResult<ValidationProblems> {
     let rx_name = args.value_of("prescription");
     let document_name = args.value_of("document");
 
@@ -122,14 +121,16 @@ fn validate(args: &ArgMatches) -> HowserResult<ValidationReport> {
     }
 }
 
-fn check(args: &ArgMatches) -> HowserResult<ValidationReport> {
+fn check(args: &ArgMatches) -> HowserResult<ValidationProblems> {
     if let Some(filename) = args.value_of("prescription") {
         let filename = String::from(filename);
         let rx_root = parse_document(&get_file_contents(&filename)?);
         let document = Document::new(&rx_root, Some(filename));
-        let rx = document.into_prescription()?;
-        let checker = SpecChecker::new(SpecRule::standard_set());
-        Ok(checker.check(&rx)?)
+        match document.into_prescription() {
+            Err(HowserError::PrescriptionError(warning)) => Ok(Some(vec![Box::new(warning)])),
+            Err(error) => Err(error),
+            Ok(_) => Ok(None),
+        }
     } else {
         Err(HowserError::RuntimeError(
             "Prescription filename could not be parsed from the argument string.".to_string(),

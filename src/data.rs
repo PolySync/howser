@@ -158,8 +158,8 @@ impl ElementType {
 
 #[cfg(test)]
 mod tests {
-    use helpers::test::strategies::content;
     use data::ContentMatchPair;
+    use helpers::test::strategies::content;
 
     proptest!{
         #[test]

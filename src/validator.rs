@@ -5,15 +5,17 @@ extern crate regex;
 extern crate unicode_segmentation;
 
 use self::regex::Regex;
-use std::collections::VecDeque;
-use document::{Document, Prescription};
-use errors::{ContentError, DocumentError, HowserError, HowserResult, Reportable, SpecWarning,
-             ValidationProblems, ValidationReport};
-use data::{ContentMatchPair, MatchType, PromptToken};
 use constants::{CONTENT_PROMPT_PATTERN, MANDATORY_PROMPT, OPTIONAL_PROMPT};
 use data::ElementType;
-use doogie::Node;
+use data::{ContentMatchPair, MatchType, PromptToken};
+use document::{Document, Prescription};
 use doogie::constants::NodeType;
+use doogie::Node;
+use errors::{
+    ContentError, DocumentError, HowserError, HowserResult, Reportable, SpecWarning,
+    ValidationProblems,
+};
+use std::collections::VecDeque;
 
 struct MandatoryMatchInput {
     rx: Node,
@@ -63,12 +65,9 @@ impl<'a> Validator<'a> {
     }
 
     /// Returns the results of validating the document against the prescription.
-    pub fn validate(&self) -> HowserResult<ValidationReport> {
+    pub fn validate(&self) -> HowserResult<ValidationProblems> {
         trace!("validate");
-        match self.validate_sibling_blocks(&self.prescription.document.root, &self.document.root)? {
-            Some(errors) => Ok(ValidationReport::new(Some(errors), None)),
-            None => Ok(ValidationReport::new(None, None)),
-        }
+        self.validate_sibling_blocks(&self.prescription.document.root, &self.document.root)
     }
 
     /// Validates a set of sibling block elements
@@ -235,7 +234,7 @@ impl<'a> Validator<'a> {
 
                 if self.prescription.document.get_match_type(&current_rx)? == MatchType::Optional {
                     if let Some(ref node) = current_node {
-                        if ! self.types_match(node, &current_rx)? {
+                        if !types_match(node, &current_rx)? {
                             break;
                         }
                     } else {
@@ -270,7 +269,7 @@ impl<'a> Validator<'a> {
                         next_bookmark = bookmark;
                     }
                     MatchResult::Error(_) => {
-                         next_node = match next_node {
+                        next_node = match next_node {
                             None => None,
                             Some(node) => node.capabilities
                                 .traverse
@@ -308,8 +307,11 @@ impl<'a> Validator<'a> {
             }
         } else {
             info!("Rx Error -- No subject of ditto token");
-            let error =
-                SpecWarning::new(&rx, &self.prescription, "No valid subject for ditto token.")?;
+            let error = SpecWarning::new(
+                &rx,
+                &self.prescription.document,
+                "No valid subject for ditto token.",
+            )?;
             Ok(MatchResult::Error(vec![Box::new(error)]))
         }
     }
@@ -537,7 +539,7 @@ impl<'a> Validator<'a> {
     }
 
     fn container_block_matches(&self, node: &Node, rx: &Node) -> HowserResult<bool> {
-        if !self.types_match(node, rx)? {
+        if !types_match(node, rx)? {
             return Ok(false);
         }
 
@@ -545,16 +547,14 @@ impl<'a> Validator<'a> {
         let is_wildcard = self.node_is_wildcard(rx)?;
 
         match (child_validation, is_wildcard) {
-            (Some(_errs), false) => {
-                Ok(false)
-            }
+            (Some(_errs), false) => Ok(false),
             _ => Ok(true),
         }
     }
 
     fn leaf_block_matches(&self, node: &Node, rx: &Node) -> HowserResult<bool> {
         trace!("leaf_block_matches");
-        if !self.types_match(node, rx)? {
+        if !types_match(node, rx)? {
             return Ok(false);
         }
 
@@ -562,9 +562,7 @@ impl<'a> Validator<'a> {
         let is_wildcard = self.node_is_wildcard(rx)?;
 
         match (child_validation, is_wildcard) {
-            (Some(_errs), false) => {
-                Ok(false)
-            }
+            (Some(_errs), false) => Ok(false),
             _ => Ok(true),
         }
     }
@@ -640,7 +638,7 @@ impl<'a> Validator<'a> {
 
     fn container_inline_matches(&self, node: &Node, rx: &Node) -> HowserResult<bool> {
         trace!("container_inline_matches");
-        if !self.types_match(node, rx)? {
+        if !types_match(node, rx)? {
             return Ok(false);
         }
 
@@ -656,56 +654,21 @@ impl<'a> Validator<'a> {
         }?;
 
         match result {
-            Some(_errs) => {
-                Ok(false)
-            }
+            Some(_errs) => Ok(false),
             None => Ok(true),
         }
     }
 
     fn leaf_inline_matches(&self, node: &Node, rx: &Node) -> HowserResult<bool> {
         trace!("leaf_inline_matches");
-        if !self.types_match(node, rx)? {
+        if !types_match(node, rx)? {
             return Ok(false);
         }
 
         match self.validate_node_content(node, rx)? {
             None => Ok(true),
-            Some(_) => {
-                Ok(false)
-            }
+            Some(_) => Ok(false),
         }
-    }
-
-    fn types_match(&self, node: &Node, rx: &Node) -> HowserResult<bool> {
-        trace!("types_match");
-        let node_getter = node.capabilities
-            .get
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?;
-        let rx_getter = rx.capabilities
-            .get
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?;
-
-        let node_type = node_getter.get_type()?;
-        let rx_type = rx_getter.get_type()?;
-
-        if node_type == rx_type {
-            if node_type == NodeType::CMarkNodeHeading {
-                let node_level = node_getter.get_heading_level()?;
-                let rx_level = rx_getter.get_heading_level()?;
-                return Ok(node_level == rx_level);
-            } else if node_type == NodeType::CMarkNodeList {
-                let node_list_type = node_getter.get_list_type()?;
-                let rx_list_type = rx_getter.get_list_type()?;
-                return Ok(node_list_type == rx_list_type);
-            } else {
-                return Ok(true);
-            }
-        }
-
-        Ok(false)
     }
 
     fn node_is_wildcard(&self, rx: &Node) -> HowserResult<bool> {
@@ -749,26 +712,22 @@ impl<'a> Validator<'a> {
 
         if ContentMatchPair::contains_mismatch(&url_match_pairs) {
             info!("Link destination Error");
-            Ok(Some(vec![
-                Box::new(ContentError::new(
-                    rx,
-                    node,
-                    &self.prescription,
-                    &self.document,
-                    url_match_pairs.clone(),
-                )?),
-            ]))
+            Ok(Some(vec![Box::new(ContentError::new(
+                rx,
+                node,
+                &self.prescription,
+                &self.document,
+                url_match_pairs.clone(),
+            )?)]))
         } else if ContentMatchPair::contains_mismatch(&title_match_pairs) {
             info!("Link title Error");
-            Ok(Some(vec![
-                Box::new(ContentError::new(
-                    rx,
-                    node,
-                    &self.prescription,
-                    &self.document,
-                    title_match_pairs.clone(),
-                )?),
-            ]))
+            Ok(Some(vec![Box::new(ContentError::new(
+                rx,
+                node,
+                &self.prescription,
+                &self.document,
+                title_match_pairs.clone(),
+            )?)]))
         } else {
             self.validate_sibling_inlines(rx, node)
         }
@@ -794,15 +753,13 @@ impl<'a> Validator<'a> {
 
         if ContentMatchPair::contains_mismatch(&match_pairs) {
             info!("Content Error");
-            return Ok(Some(vec![
-                Box::new(ContentError::new(
-                    rx,
-                    node,
-                    &self.prescription,
-                    &self.document,
-                    match_pairs,
-                )?),
-            ]));
+            return Ok(Some(vec![Box::new(ContentError::new(
+                rx,
+                node,
+                &self.prescription,
+                &self.document,
+                match_pairs,
+            )?)]));
         }
 
         Ok(None)
@@ -959,14 +916,46 @@ impl<'a> Validator<'a> {
     }
 }
 
+pub fn types_match(node: &Node, other: &Node) -> HowserResult<bool> {
+    trace!("types_match");
+    let node_getter = node.capabilities
+        .get
+        .as_ref()
+        .ok_or(HowserError::CapabilityError)?;
+    let rx_getter = other
+        .capabilities
+        .get
+        .as_ref()
+        .ok_or(HowserError::CapabilityError)?;
+
+    let node_type = node_getter.get_type()?;
+    let rx_type = rx_getter.get_type()?;
+
+    if node_type == rx_type {
+        if node_type == NodeType::CMarkNodeHeading {
+            let node_level = node_getter.get_heading_level()?;
+            let rx_level = rx_getter.get_heading_level()?;
+            return Ok(node_level == rx_level);
+        } else if node_type == NodeType::CMarkNodeList {
+            let node_list_type = node_getter.get_list_type()?;
+            let rx_list_type = rx_getter.get_list_type()?;
+            return Ok(node_list_type == rx_list_type);
+        } else {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
 #[cfg(test)]
 mod tests {
+    use super::Validator;
+    use data::ContentMatchPair;
+    use document::Document;
     use doogie::parse_document;
     use helpers::test::strategies::content;
     use helpers::test::strategies::helpers::*;
-    use data::ContentMatchPair;
-    use document::Document;
-    use super::Validator;
 
     #[test]
     fn test_literal_text_match() {
@@ -979,7 +968,7 @@ mod tests {
 
         let report = validator.validate().unwrap();
 
-        assert!(report.errors.is_none());
+        assert!(report.is_none());
     }
 
     #[test]
@@ -992,7 +981,7 @@ mod tests {
 
         let report = validator.validate().unwrap();
 
-        assert!(report.errors.is_some());
+        assert!(report.is_some());
     }
 
     #[test]
@@ -1013,8 +1002,8 @@ mod tests {
         let report_1 = validator_1.validate().unwrap();
         let report_2 = validator_2.validate().unwrap();
 
-        assert!(report_1.errors.is_none());
-        assert!(report_2.errors.is_none());
+        assert!(report_1.is_none());
+        assert!(report_2.is_none());
     }
 
     #[test]
@@ -1027,7 +1016,7 @@ mod tests {
 
         let report = validator.validate().unwrap();
 
-        assert!(report.errors.is_some());
+        assert!(report.is_some());
     }
 
     #[test]
@@ -1041,7 +1030,7 @@ mod tests {
 
         let report = validator.validate().unwrap();
 
-        assert!(report.errors.is_none());
+        assert!(report.is_none());
     }
 
     #[test]
@@ -1054,7 +1043,7 @@ mod tests {
 
         let report = validator.validate().unwrap();
 
-        assert!(report.errors.is_some());
+        assert!(report.is_some());
     }
 
     #[test]
@@ -1074,8 +1063,8 @@ mod tests {
         let report_1 = validator_1.validate().unwrap();
         let report_2 = validator_2.validate().unwrap();
 
-        assert!(report_1.errors.is_none());
-        assert!(report_2.errors.is_none());
+        assert!(report_1.is_none());
+        assert!(report_2.is_none());
     }
 
     #[test]
@@ -1088,7 +1077,7 @@ mod tests {
 
         let report = validator.validate().unwrap();
 
-        assert!(report.errors.is_some());
+        assert!(report.is_some());
     }
 
     #[test]
@@ -1101,7 +1090,7 @@ mod tests {
 
         let report = validator.validate().unwrap();
 
-        assert!(report.errors.is_none());
+        assert!(report.is_none());
     }
 
     #[test]
@@ -1121,8 +1110,8 @@ mod tests {
         let validator_1 = Validator::new(rx_1, doc);
         let validator_2 = Validator::new(rx_2, empty_doc);
 
-        assert!(validator_1.validate().unwrap().errors.is_none());
-        assert!(validator_2.validate().unwrap().errors.is_none());
+        assert!(validator_1.validate().unwrap().is_none());
+        assert!(validator_2.validate().unwrap().is_none());
     }
 
     #[test]
@@ -1136,7 +1125,7 @@ mod tests {
         let report = validator.validate().unwrap();
 
         assert!(
-            report.errors.is_some(),
+            report.is_some(),
             "The mandatory wildcard paragraph did not fail against empty document."
         );
     }
@@ -1158,7 +1147,7 @@ mod tests {
 
         let report = validator.validate().unwrap();
 
-        assert!(report.errors.is_none());
+        assert!(report.is_none());
     }
 
     #[test]
@@ -1178,7 +1167,7 @@ mod tests {
 
         let report = validator.validate().unwrap();
 
-        assert!(report.errors.is_none());
+        assert!(report.is_none());
     }
 
     #[test]
@@ -1198,7 +1187,7 @@ mod tests {
 
         let report = validator.validate().unwrap();
 
-        assert!(report.errors.is_some());
+        assert!(report.is_some());
     }
 
     #[test]
@@ -1219,12 +1208,12 @@ mod tests {
 
         let report = validator.validate().unwrap();
 
-        assert!(report.errors.is_some());
+        assert!(report.is_some());
     }
 
     #[test]
     fn test_mandatory_block_level_prompted_paragraph_match() {
-        let rx_text = "-!!--!!-my dear-??-";
+        let rx_text = "-!!-\n-!!-my dear-??-";
         let match_text = "Elementary my dear Watson";
 
         let rx_root = parse_document(&rx_text.to_string());
@@ -1237,30 +1226,12 @@ mod tests {
 
         let report = validator.validate().unwrap();
 
-        assert!(report.errors.is_none());
-    }
-
-    #[test]
-    fn test_leading_whitespace_ignored_in_mandatory_block_level_paragraph_match() {
-        let rx_text = "-!!-  -!!-my dear-??-";
-        let match_text = "Elementary my dear Watson";
-
-        let rx_root = parse_document(&rx_text.to_string());
-        let match_root = parse_document(&match_text.to_string());
-
-        let rx = Document::new(&rx_root, None).into_prescription().unwrap();
-        let doc = Document::new(&match_root, None);
-
-        let validator = Validator::new(rx, doc);
-
-        let report = validator.validate().unwrap();
-
-        assert!(report.errors.is_none());
+        assert!(report.is_none());
     }
 
     #[test]
     fn test_optional_block_level_prompted_paragraph_match() {
-        let rx_text = "-??--!!-my dear-??-";
+        let rx_text = "-??-\n-!!-my dear-??-";
         let first_match_text = "Elementary my dear Watson";
         let second_match_text = "";
 
@@ -1282,18 +1253,18 @@ mod tests {
         let second_validator = Validator::new(second_rx, second_doc);
 
         assert!(
-            first_validator.validate().unwrap().errors.is_none(),
+            first_validator.validate().unwrap().is_none(),
             "The optional prompted paragraph did not match the given string."
         );
         assert!(
-            second_validator.validate().unwrap().errors.is_none(),
+            second_validator.validate().unwrap().is_none(),
             "The optional prompted paragraph did not match an empty string"
         );
     }
 
     #[test]
     fn test_mandatory_block_level_prompted_paragraph_mismatch() {
-        let rx_text = "-!!--!!-my dear-??-";
+        let rx_text = "-!!-\n-!!-my dear-??-";
         let match_text = "my dear";
 
         let first_rx_root = parse_document(&rx_text.to_string());
@@ -1314,11 +1285,11 @@ mod tests {
         let second_validator = Validator::new(second_rx, second_doc);
 
         assert!(
-            first_validator.validate().unwrap().errors.is_some(),
+            first_validator.validate().unwrap().is_some(),
             "The mandatory prompted paragraph did not fail against mismatched text."
         );
         assert!(
-            second_validator.validate().unwrap().errors.is_some(),
+            second_validator.validate().unwrap().is_some(),
             "The mandatory prompted paragraph did not fail against empty document."
         );
     }

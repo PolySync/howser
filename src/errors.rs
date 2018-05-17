@@ -2,17 +2,17 @@
 
 extern crate regex;
 
-use helpers::cli::ShellText;
-use helpers::cli;
 use self::regex::Error as RegexError;
+use data::{ContentMatchPair, PromptToken};
+use document::{Document, Prescription};
+use doogie::errors::DoogieError;
+use doogie::Node;
+use helpers::cli;
+use helpers::cli::ShellText;
 use std::error;
 use std::fmt;
 use std::io::Error as IOError;
-use doogie::errors::DoogieError;
-use doogie::Node;
-use document::{Document, Prescription};
 use std::ops::Add;
-use data::{ContentMatchPair, PromptToken};
 
 /// Crate-wide Result type.
 pub type HowserResult<T> = Result<T, HowserError>;
@@ -30,7 +30,7 @@ pub enum HowserError {
     /// For handling instances where a `Node` does not have the required capabilities.
     CapabilityError,
     RegexError(RegexError),
-    PrescriptionError,
+    PrescriptionError(SpecWarning),
 }
 
 impl error::Error for HowserError {
@@ -124,21 +124,17 @@ impl Add for ValidationReport {
 ///
 /// Contains the final verdict on validity along with the reportable info.
 pub struct ValidationResult {
-    report: ValidationReport,
+    issues: ValidationProblems,
     valid: bool,
 }
 
 impl ValidationResult {
-    pub fn new(report: ValidationReport, valid: bool) -> ValidationResult {
-        ValidationResult { report, valid }
+    pub fn new(issues: ValidationProblems, valid: bool) -> ValidationResult {
+        ValidationResult { issues, valid }
     }
 
-    pub fn get_warnings<'a>(&'a self) -> &'a ValidationProblems {
-        &self.report.warnings
-    }
-
-    pub fn get_errors<'a>(&'a self) -> &'a ValidationProblems {
-        &self.report.errors
+    pub fn get_issues<'a>(&'a self) -> &'a ValidationProblems {
+        &self.issues
     }
 
     pub fn is_valid(&self) -> bool {
@@ -159,6 +155,7 @@ pub trait Reportable {
 }
 
 /// A warning related to `Prescription` specification compliance issues.
+#[derive(Debug)]
 pub struct SpecWarning {
     line: u32,
     file: String,
@@ -166,14 +163,14 @@ pub struct SpecWarning {
 }
 
 impl SpecWarning {
-    pub fn new(node: &Node, rx: &Prescription, message: &str) -> HowserResult<Self> {
+    pub fn new(node: &Node, rx: &Document, message: &str) -> HowserResult<Self> {
         let getter = node.capabilities
             .get
             .as_ref()
             .ok_or(HowserError::CapabilityError)?;
 
         let line = getter.get_start_line()?;
-        let file = match rx.document.filename.as_ref() {
+        let file = match rx.filename.as_ref() {
             Some(filename) => filename.clone(),
             None => String::new(),
         };
@@ -421,18 +418,18 @@ impl Reportable for ContentError {
                         ))).to_string()
                     }
                     &ContentMatchPair(PromptToken::Literal(ref required), None) => {
-                        let required_content = ShellText::ErrorColor(Box::new(
-                            ShellText::Literal(required.clone()),
-                        )).to_string();
+                        let required_content = ShellText::ErrorColor(Box::new(ShellText::Literal(
+                            required.clone(),
+                        ))).to_string();
                         format!(
                             "The required literal content '{}' was missing.",
                             required_content
                         )
                     }
                     &ContentMatchPair(PromptToken::Literal(ref required), Some(ref found)) => {
-                        let required_content = ShellText::ErrorColor(Box::new(
-                            ShellText::Literal(required.clone()),
-                        )).to_string();
+                        let required_content = ShellText::ErrorColor(Box::new(ShellText::Literal(
+                            required.clone(),
+                        ))).to_string();
                         let found_content = ShellText::ErrorColor(Box::new(ShellText::Literal(
                             found.clone(),
                         ))).to_string();

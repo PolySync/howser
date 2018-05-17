@@ -31,20 +31,11 @@ pub fn make_cli_report(result: &ValidationResult, config: Vec<CLIOption>) -> Str
         }
     }
 
-    if let &Some(ref warnings) = result.get_warnings() {
-        for warning in warnings {
+    if let &Some(ref issues) = result.get_issues() {
+        for issue in issues {
             report.push(match verbose_mode {
-                true => warning.long_msg(),
-                false => warning.short_msg(),
-            });
-        }
-    }
-
-    if let &Some(ref errors) = result.get_errors() {
-        for error in errors {
-            report.push(match verbose_mode {
-                true => error.long_msg(),
-                false => error.short_msg(),
+                true => issue.long_msg(),
+                false => issue.short_msg(),
             });
         }
     }
