@@ -21,12 +21,10 @@ pub type ValidationProblem = Box<Reportable>;
 /// Error types for use with `HowserResult`.
 #[derive(Debug)]
 pub enum HowserError {
-    /// Wrapper for errors originating from the `remarkable` crate.
-    RemarkableError(DoogieError),
+    DoogieError(DoogieError),
     IOError(IOError),
     Usage(String),
     RuntimeError(String),
-    /// For handling instances where a `Node` does not have the required capabilities.
     CapabilityError,
     RegexError(RegexError),
     PrescriptionError(SpecWarning),
@@ -36,13 +34,18 @@ impl error::Error for HowserError {
     fn description(&self) -> &str {
         match self {
             &HowserError::Usage(ref message) => message.as_str(),
-            _ => "General Error",
+            &HowserError::DoogieError(ref error) => error.description(),
+            &HowserError::IOError(ref error) => error.description(),
+            &HowserError::RuntimeError(ref message) => message,
+            &HowserError::CapabilityError => "Capability Error",
+            &HowserError::RegexError(ref error) => error.description(),
+            &HowserError::PrescriptionError(_) => "Prescription Error"
         }
     }
 
     fn cause(&self) -> Option<&error::Error> {
         match self {
-            &HowserError::RemarkableError(ref error) => Some(error),
+            &HowserError::DoogieError(ref error) => Some(error),
             &HowserError::IOError(ref error) => Some(error),
             &HowserError::RegexError(ref error) => Some(error),
             _ => None,
@@ -64,7 +67,7 @@ impl From<IOError> for HowserError {
 
 impl From<DoogieError> for HowserError {
     fn from(err: DoogieError) -> Self {
-        HowserError::RemarkableError(err)
+        HowserError::DoogieError(err)
     }
 }
 
@@ -74,7 +77,7 @@ impl From<RegexError> for HowserError {
     }
 }
 
-/// Trait for reporting validation problems.
+/// Trait for aggregating validation problems.
 pub trait Reportable {
     /// Report in standard single line format.
     fn short_msg(&self) -> String;
@@ -171,19 +174,19 @@ impl DocumentError {
             .as_ref()
             .ok_or(HowserError::CapabilityError)?;
 
-        let _rx_getter = rx_node
+        let rx_getter = rx_node
             .capabilities
             .get
             .as_ref()
             .ok_or(HowserError::CapabilityError)?;
-        let _rx_renderer = rx_node
+        let rx_renderer = rx_node
             .capabilities
             .render
             .as_ref()
             .ok_or(HowserError::CapabilityError)?;
 
         let document_line = doc_node_getter.get_start_line()?;
-        let rx_line = doc_node_getter.get_start_line()?;
+        let rx_line = rx_getter.get_start_line()?;
         let document_file = document
             .filename
             .as_ref()
@@ -195,7 +198,7 @@ impl DocumentError {
             .unwrap_or(&String::new())
             .to_string();
         let document_snippet = doc_node_renderer.render_commonmark();
-        let rx_snippet = _rx_renderer.render_commonmark();
+        let rx_snippet = rx_renderer.render_commonmark();
 
         Ok(DocumentError {
             document_line,

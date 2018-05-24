@@ -17,33 +17,39 @@ use errors::{
 };
 use std::collections::VecDeque;
 
+/// Arguments for validating mandatory block level elements.
 struct MandatoryMatchInput {
     rx: Node,
     node: Option<Node>,
     bookmark: Node,
 }
 
+/// Arguments for validating optional block level elements.
 struct OptionalMatchInput {
     rx: Node,
     node: Option<Node>,
 }
 
+/// Return type for validating optional block level elements.
 struct OptionalMatchOutput {
     rx: Option<Node>,
     node: Option<Node>,
 }
 
+/// Type for managing the state of the validation process.
 struct MatchState {
     rx: Option<Node>,
     node: Option<Node>,
     bookmark: Option<Node>,
 }
 
+/// Return type for a general validation step.
 enum MatchResult {
     State(MatchState),
     Error(Box<Reportable>),
 }
 
+/// Tracks state in matching algorithms that alternate matching directions.
 #[derive(Debug)]
 enum MatchDirection {
     Left,
@@ -57,6 +63,7 @@ pub struct Validator<'a> {
 }
 
 impl<'a> Validator<'a> {
+    /// Returns a new `Validator`.
     pub fn new(prescription: Prescription<'a>, document: Document<'a>) -> Self {
         Validator {
             prescription: prescription,
@@ -64,9 +71,11 @@ impl<'a> Validator<'a> {
         }
     }
 
-    /// Returns the results of validating the document against the prescription.
+    /// Validates the document against the prescription and returns the results.
+    ///
+    /// `None` indicates that the document is valid.
     pub fn validate(&self) -> HowserResult<Option<ValidationProblem>> {
-        trace!("validate");
+        trace!("validate()");
         self.validate_sibling_blocks(&self.prescription.document.root, &self.document.root)
     }
 
@@ -76,28 +85,7 @@ impl<'a> Validator<'a> {
         parent_rx_node: &Node,
         parent_doc_node: &Node,
     ) -> HowserResult<Option<ValidationProblem>> {
-        trace!("validate_sibling_blocks");
-        debug!("Node Tree");
-        debug!(
-            "{}",
-            parent_doc_node
-                .capabilities
-                .render
-                .as_ref()
-                .unwrap()
-                .render_xml()
-        );
-        debug!("Rx Tree");
-        debug!(
-            "{}",
-            parent_rx_node
-                .capabilities
-                .render
-                .as_ref()
-                .unwrap()
-                .render_xml()
-        );
-
+        trace!("validate_sibling_blocks()");
         let parent_rx_traverser = parent_rx_node
             .capabilities
             .traverse
@@ -108,7 +96,6 @@ impl<'a> Validator<'a> {
             .traverse
             .as_ref()
             .ok_or(HowserError::CapabilityError)?;
-
         let mut current_rx = parent_rx_traverser.last_child()?;
         let mut current_node = parent_node_traverser.last_child()?;
         let mut current_bookmark = parent_node_traverser.last_child()?;
@@ -134,7 +121,7 @@ impl<'a> Validator<'a> {
         }
 
         if let Some(extra_node) = current_node {
-            info!("Superfluous Nodes Error");
+            debug!("validate_sibling_blocks:: Superfluous Nodes Error");
             let error = DocumentError::new(
                 &extra_node,
                 parent_rx_node,
@@ -144,11 +131,13 @@ impl<'a> Validator<'a> {
             )?;
             Ok(Some(Box::new(error)))
         } else {
+            debug!("validate_sibling_blocks:: Blocks were valid");
             Ok(None)
         }
     }
 
-    /// Performs validation on a block element and returns an updated MatchState if successful.
+    /// Performs the next validation step given the inputs and returns an updated MatchState if
+    /// successful.
     fn consume_block_match(
         &self,
         rx: Node,
@@ -156,7 +145,28 @@ impl<'a> Validator<'a> {
         bookmark: Option<Node>,
         parent_node: &Node,
     ) -> HowserResult<MatchResult> {
-        trace!("consume_block_match");
+        trace!("consume_block_match()");
+        if let Some(ref node) = node {
+            info!(
+                "{}",
+                node
+                    .capabilities
+                    .render
+                    .as_ref()
+                    .unwrap()
+                    .render_xml()
+            );
+        }
+        info!(
+            "{}",
+            rx
+                .capabilities
+                .render
+                .as_ref()
+                .unwrap()
+                .render_xml()
+        );
+
         match self.prescription.document.get_match_type(&rx)? {
             MatchType::Repeatable => {
                 self.consume_repeatable_matches(rx, node, bookmark, parent_node)
@@ -168,7 +178,7 @@ impl<'a> Validator<'a> {
                         parent_node,
                     )
                 } else {
-                    info!("Missing Mandatory node and no bookmark");
+                    debug!("consume_block_match:: Missing Mandatory node and no bookmark");
                     let error = DocumentError::new(
                         parent_node,
                         &rx,
@@ -196,6 +206,7 @@ impl<'a> Validator<'a> {
         }
     }
 
+    /// Performs validation on a repeatable element and returns the result.
     fn consume_repeatable_matches(
         &self,
         rx: Node,
@@ -203,60 +214,61 @@ impl<'a> Validator<'a> {
         bookmark: Option<Node>,
         parent_node: &Node,
     ) -> HowserResult<MatchResult> {
-        trace!("consume_repeatable_matches");
-        let ditto_traverser = rx.capabilities
-            .traverse
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?;
-
-        if let Some(repeatable_rx) = ditto_traverser.prev_sibling()? {
+        trace!("consume_repeatable_matches()");
+        if let Some(repeatable_rx) = rx.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.prev_sibling()? {
+            let out_rx = repeatable_rx.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.prev_sibling()?;
+            let mut out_node = match node {
+                Some(ref node) => Some(node.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.itself()?),
+                None => None
+            };
+            let mut out_bookmark = match bookmark {
+                Some(ref node) => Some(node.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.itself()?),
+                None => None
+            };
+            let mut current_rx = repeatable_rx.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.itself()?;
+            let mut current_node = match node {
+                Some(ref node) => Some(node.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.itself()?),
+                None => None
+            };
+            let mut current_bookmark = match bookmark {
+                Some(ref node) => Some(node.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.itself()?),
+                None => None
+            };
             let match_type = self.prescription.document.get_match_type(&repeatable_rx)?;
-            let mut match_count: usize = 0;
-            let mut output_bookmark: Option<Node> = None;
-            let mut next_node = node;
-            let mut next_bookmark = bookmark;
+            let mut matches_consumed: usize = 0;
 
             loop {
-                let current_node = match next_node {
-                    Some(ref node) => Some(node.capabilities
-                        .traverse
-                        .as_ref()
-                        .ok_or(HowserError::CapabilityError)?
-                        .itself()?),
-                    _ => None,
+                let current_node_id = match current_node {
+                    Some(ref node) => node.capabilities.get.as_ref().ok_or(HowserError::CapabilityError)?.get_id()?,
+                    _ => 0
                 };
-                let current_rx = repeatable_rx
-                    .capabilities
-                    .traverse
-                    .as_ref()
-                    .ok_or(HowserError::CapabilityError)?
-                    .itself()?;
-
-                if self.prescription.document.get_match_type(&current_rx)? == MatchType::Optional {
-                    if let Some(ref node) = current_node {
-                        if !types_match(node, &current_rx)? {
-                            break;
-                        }
-                    } else {
-                        break;
-                    }
-                }
-
-                match self.consume_block_match(
+                let match_state = self.consume_block_match(
                     current_rx,
                     current_node,
-                    next_bookmark,
-                    parent_node,
-                )? {
-                    MatchResult::State(state) => {
+                    current_bookmark,
+                    parent_node)?;
+
+                match (match_state, match_type.clone()) {
+                    (MatchResult::State(state), MatchType::Mandatory) => {
                         let MatchState {
                             rx: _,
-                            node,
-                            bookmark,
+                            node: result_node,
+                            bookmark: result_bookmark,
                         } = state;
-                        match_count += 1;
-                        if match_count == 1 {
-                            output_bookmark = match bookmark {
+
+                        matches_consumed += 1;
+                        current_node = match result_node {
+                            Some(ref node) => Some(node.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.itself()?),
+                            None => None
+                        };
+                        current_rx = repeatable_rx.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.itself()?;
+                        current_bookmark = result_bookmark;
+                        out_node = match result_node {
+                            Some(ref node) => Some(node.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.itself()?),
+                            None => None
+                        };
+                        if matches_consumed == 1 {
+                            out_bookmark = match current_bookmark {
                                 Some(ref node) => Some(node.capabilities
                                     .traverse
                                     .as_ref()
@@ -265,28 +277,47 @@ impl<'a> Validator<'a> {
                                 _ => None,
                             };
                         }
-                        next_node = node;
-                        next_bookmark = bookmark;
-                    }
-                    MatchResult::Error(_) => {
-                        next_node = match next_node {
-                            None => None,
-                            Some(node) => node.capabilities
-                                .traverse
-                                .as_ref()
-                                .ok_or(HowserError::CapabilityError)?
-                                .prev_sibling()?,
+                    },
+                    (MatchResult::State(state), MatchType::Optional) => {
+                        let MatchState {
+                            rx: _,
+                            node: result_node,
+                            bookmark: result_bookmark,
+                        } = state;
+
+                        current_node = match result_node {
+                            Some(ref node) => Some(node.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.itself()?),
+                            None => None
                         };
+                        current_rx = repeatable_rx.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.itself()?;
+                        current_bookmark = result_bookmark;
+                        out_node = match result_node {
+                            Some(ref node) => Some(node.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.itself()?),
+                            None => None
+                        };
+                        if let Some(ref node) = current_node {
+                            if node.capabilities.get.as_ref().ok_or(HowserError::CapabilityError)?.get_id()? == current_node_id {
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
+                    },
+                    (MatchResult::Error(_), _) => {
                         break;
-                    }
+                    },
+                    _ => return Err(HowserError::RuntimeError("Invalid pattern encountered in repeatable block match".to_string()))
                 };
             }
 
-            match (match_count, match_type) {
+            match (matches_consumed, match_type) {
                 (0, MatchType::Mandatory) => {
-                    info!("Missing mandatory node");
+                    debug!("consume_repeatable_matches:: zero matches found for mandatory node");
                     let error = DocumentError::new(
-                        parent_node,
+                        match node {
+                            Some(ref node) => node,
+                            None => parent_node
+                        },
                         &rx,
                         &self.document,
                         &self.prescription,
@@ -294,19 +325,17 @@ impl<'a> Validator<'a> {
                     )?;
                     Ok(MatchResult::Error(Box::new(error)))
                 }
-                _ => Ok(MatchResult::State(MatchState {
-                    rx: repeatable_rx
-                        .capabilities
-                        .traverse
-                        .as_ref()
-                        .ok_or(HowserError::CapabilityError)?
-                        .prev_sibling()?,
-                    node: next_node,
-                    bookmark: output_bookmark,
-                })),
+                _ => {
+                    info!("consume_repeatable_matches:: matches found or node was optional");
+                    Ok(MatchResult::State(MatchState {
+                        rx: out_rx,
+                        node: out_node,
+                        bookmark: out_bookmark,
+                    }))
+                },
             }
         } else {
-            info!("Rx Error -- No subject of ditto token");
+            warn!("consume_repeatable_matches:: Rx Error -- No subject of ditto token");
             let error = SpecWarning::new(
                 &rx,
                 &self.prescription.document,
@@ -316,17 +345,17 @@ impl<'a> Validator<'a> {
         }
     }
 
+    /// Performs validation on a mandatory block element and returns the result.
     fn consume_mandatory_block_match(
         &self,
         input: MandatoryMatchInput,
         parent_node: &Node,
     ) -> HowserResult<MatchResult> {
-        trace!("consume_mandatory_block_match");
+        trace!("consume_mandatory_block_match()");
         let MandatoryMatchInput { rx, node, bookmark } = input;
 
         if let Some(node) = node {
             if self.block_matches(&node, &rx)? {
-                // Next node matches rx. Advance the state.
                 let end_node = Some(node.capabilities
                     .traverse
                     .as_ref()
@@ -350,20 +379,19 @@ impl<'a> Validator<'a> {
                     .as_ref()
                     .ok_or(HowserError::CapabilityError)?
                     .prev_sibling()?;
+                info!("consume_mandatory_block_match:: Block matched");
                 Ok(MatchResult::State(MatchState {
                     rx: next_rx,
                     node: next_node,
                     bookmark: next_bookmark,
                 }))
             } else {
-                // Next node doesn't match rx. Search for match from bookmark.
                 let end_node = Some(node.capabilities
                     .traverse
                     .as_ref()
                     .ok_or(HowserError::CapabilityError)?
                     .itself()?);
                 if let Some(prev_match) = self.scan_for_match(&bookmark, &end_node, &rx)? {
-                    // Match was found in a previously matched node. Rewind state to that node and advance the prescription.
                     let match_traverser = prev_match
                         .capabilities
                         .traverse
@@ -376,14 +404,14 @@ impl<'a> Validator<'a> {
                         .as_ref()
                         .ok_or(HowserError::CapabilityError)?
                         .prev_sibling()?;
+                    info!("consume_mandatory_block_match:: Current node mismatch, but match found from bookmark");
                     Ok(MatchResult::State(MatchState {
                         rx: next_rx,
                         node: next_node,
                         bookmark: next_bookmark,
                     }))
                 } else {
-                    // No previously matched nodes match the current rx either. Validation fails.
-                    info!("Nodes do not match");
+                    debug!("consume_mandatory_block_match:: Bookmark search failed, no match for {:?}", rx);
                     let error = DocumentError::new(
                         parent_node,
                         &rx,
@@ -395,9 +423,7 @@ impl<'a> Validator<'a> {
                 }
             }
         } else {
-            // No unmatched nodes left to match against rx. Search from bookmark for matching node.
             if let Some(prev_match) = self.scan_for_match(&bookmark, &None, &rx)? {
-                // Match was found in a previously matched node. Rewind state to that node and advance the prescription.
                 let match_traverser = prev_match
                     .capabilities
                     .traverse
@@ -410,14 +436,14 @@ impl<'a> Validator<'a> {
                     .as_ref()
                     .ok_or(HowserError::CapabilityError)?
                     .prev_sibling()?;
+                info!("consume_mandatory_block_match:: No current node, but match found from bookmark");
                 Ok(MatchResult::State(MatchState {
                     rx: next_rx,
                     node: next_node,
                     bookmark: next_bookmark,
                 }))
             } else {
-                // No previously matched nodes match the current rx either. Validation fails.
-                info!("consume_mandatory_block_match -- Nodes do not match");
+                debug!("consume_mandatory_block_match -- No current node and No match");
                 let error = DocumentError::new(
                     parent_node,
                     &rx,
@@ -430,16 +456,16 @@ impl<'a> Validator<'a> {
         }
     }
 
+    /// Performs validation on an optional block element and returns the result.
     fn consume_optional_block_match(
         &self,
         input: OptionalMatchInput,
     ) -> HowserResult<OptionalMatchOutput> {
-        trace!("consume_optional_block_match");
+        trace!("consume_optional_block_match()");
         let OptionalMatchInput { rx, node } = input;
 
         if let Some(node) = node {
             if self.block_matches(&node, &rx)? {
-                // Next node matched rx. Advance state.
                 let next_node = node.capabilities
                     .traverse
                     .as_ref()
@@ -455,7 +481,6 @@ impl<'a> Validator<'a> {
                     node: next_node,
                 })
             } else {
-                // Next node does not match but is optional. Advance rx.
                 let next_rx = rx.capabilities
                     .traverse
                     .as_ref()
@@ -467,7 +492,6 @@ impl<'a> Validator<'a> {
                 })
             }
         } else {
-            // No nodes left to match against rx, but is optional. Advance rx.
             let next_rx = rx.capabilities
                 .traverse
                 .as_ref()
@@ -477,13 +501,17 @@ impl<'a> Validator<'a> {
         }
     }
 
+    /// Searchs for a node that will pass validation among the given segment of adjacent siblings.
+    ///
+    /// Starts searching at `start_node` and progresses through to `end_node` until a match is
+    /// found. Returns the first matched `Node` or `None` if a match could not be found.
     fn scan_for_match(
         &self,
         start_node: &Node,
         end_node: &Option<Node>,
         rx: &Node,
     ) -> HowserResult<Option<Node>> {
-        trace!("scan_for_match");
+        trace!("scan_for_match()");
         let mut current_node = Some(start_node
             .capabilities
             .traverse
@@ -529,8 +557,11 @@ impl<'a> Validator<'a> {
         Ok(None)
     }
 
+    /// Determines if `node` matches `rx`.
+    ///
+    /// Inputs are assumed to be block elements.
     fn block_matches(&self, node: &Node, rx: &Node) -> HowserResult<bool> {
-        trace!("block_matches");
+        trace!("block_matches()");
         match ElementType::determine(rx)? {
             ElementType::ContainerBlock => Ok(self.container_block_matches(&node, &rx)?),
             ElementType::LeafBlock => Ok(self.leaf_block_matches(&node, &rx)?),
@@ -538,8 +569,13 @@ impl<'a> Validator<'a> {
         }
     }
 
+    /// Determines if `node` matches `rx`.
+    ///
+    /// The inputs are assumed to be container blocks.
     fn container_block_matches(&self, node: &Node, rx: &Node) -> HowserResult<bool> {
+        trace!("container_block_matches()");
         if !types_match(node, rx)? {
+            debug!("container_block_matches:: different types -- no match");
             return Ok(false);
         }
 
@@ -547,14 +583,24 @@ impl<'a> Validator<'a> {
         let is_wildcard = self.node_is_wildcard(rx)?;
 
         match (child_validation, is_wildcard) {
-            (Some(_errs), false) => Ok(false),
-            _ => Ok(true),
+            (Some(_errs), false) => {
+                debug!("container_block_matches:: Children don't match");
+                Ok(false)
+            },
+            _ => {
+                debug!("container_block_matches:: Children match");
+                Ok(true)
+            },
         }
     }
 
+    /// Determines if `node` matches `rx`.
+    ///
+    /// The inputs are assumed to be leaf blocks.
     fn leaf_block_matches(&self, node: &Node, rx: &Node) -> HowserResult<bool> {
-        trace!("leaf_block_matches");
+        trace!("leaf_block_matches()");
         if !types_match(node, rx)? {
+            debug!("leaf_block_matches:: Types do not match");
             return Ok(false);
         }
 
@@ -562,17 +608,26 @@ impl<'a> Validator<'a> {
         let is_wildcard = self.node_is_wildcard(rx)?;
 
         match (child_validation, is_wildcard) {
-            (Some(_errs), false) => Ok(false),
-            _ => Ok(true),
+            (Some(_errs), false) => {
+                debug!("leaf_block_matches:: Children not valid");
+                Ok(false)
+            },
+            _ => {
+                debug!("leaf_block_matches:: Children valid");
+                Ok(true)
+            },
         }
     }
 
+    /// Performs validation on a set of sibling inline elements.
+    ///
+    /// Returns `None` if the siblings are valid.
     fn validate_sibling_inlines(
         &self,
         parent_rx: &Node,
         parent_node: &Node,
     ) -> HowserResult<Option<ValidationProblem>> {
-        trace!("validate_sibling_inlines");
+        trace!("validate_sibling_inlines()");
         let parent_rx_traverser = parent_rx
             .capabilities
             .traverse
@@ -601,7 +656,7 @@ impl<'a> Validator<'a> {
                         .ok_or(HowserError::CapabilityError)?
                         .next_sibling()?;
                 } else {
-                    debug!("Inline match Error");
+                    debug!("validate_sibling_inlines:: Inline match Error");
                     let error = DocumentError::new(
                         &node,
                         &rx,
@@ -612,7 +667,7 @@ impl<'a> Validator<'a> {
                     return Ok(Some(Box::new(error)));
                 }
             } else {
-                debug!("Missing node Error");
+                debug!("validate_sibling_inlines:: Missing node Error");
                 let error = DocumentError::new(
                     &parent_node,
                     &rx,
@@ -627,8 +682,11 @@ impl<'a> Validator<'a> {
         Ok(None)
     }
 
+    /// Determines if `node` matches `rx`.
+    ///
+    /// Inputs are assumed to be inline elements.
     fn inline_matches(&self, rx: &Node, node: &Node) -> HowserResult<bool> {
-        trace!("inline_matches");
+        trace!("inline_matches()");
         match ElementType::determine(rx)? {
             ElementType::InlineLeaf => self.leaf_inline_matches(node, rx),
             ElementType::InlineContainer => self.container_inline_matches(node, rx),
@@ -636,8 +694,11 @@ impl<'a> Validator<'a> {
         }
     }
 
+    /// Determines if `node` matches `rx`.
+    ///
+    /// Inputs are assumed to be container inline elements.
     fn container_inline_matches(&self, node: &Node, rx: &Node) -> HowserResult<bool> {
-        trace!("container_inline_matches");
+        trace!("container_inline_matches()");
         if !types_match(node, rx)? {
             return Ok(false);
         }
@@ -659,8 +720,11 @@ impl<'a> Validator<'a> {
         }
     }
 
+    /// Determines if `node` matches `rx`.
+    ///
+    /// Inputs are assumed to be leaf inline elements.
     fn leaf_inline_matches(&self, node: &Node, rx: &Node) -> HowserResult<bool> {
-        trace!("leaf_inline_matches");
+        trace!("leaf_inline_matches()");
         if !types_match(node, rx)? {
             debug!("Type mismatch");
             return Ok(false);
@@ -672,16 +736,30 @@ impl<'a> Validator<'a> {
         }
     }
 
+    /// Determines if the given prescription `Node` is a wildcard.
     fn node_is_wildcard(&self, rx: &Node) -> HowserResult<bool> {
-        trace!("node_is_wildcard");
-        self.prescription.document.is_wildcard(rx)
+        trace!("node_is_wildcard()");
+        match self.prescription.document.is_wildcard(rx)? {
+            true => {
+                debug!("Wildcard!");
+                Ok(true)
+            },
+            false => {
+                debug!("Not Wildcard");
+                Ok(false)
+            }
+        }
     }
 
+    /// Performs validation of the textual content of `node` against `rx`.
+    ///
+    /// Returns `None` if the content was valid.
     fn validate_node_content(
         &self,
         node: &Node,
         rx: &Node,
     ) -> HowserResult<Option<ValidationProblem>> {
+        trace!("validate_node_content()");
         let rx_getter = rx.capabilities
             .get
             .as_ref()
@@ -692,12 +770,16 @@ impl<'a> Validator<'a> {
         }
     }
 
+
+    /// Performs validation of the textual content of a link type node.
+    ///
+    /// Returns `None` if valid.
     fn validate_link_node_content(
         &self,
         node: &Node,
         rx: &Node,
     ) -> HowserResult<Option<ValidationProblem>> {
-        trace!("validate_link_node_content");
+        trace!("validate_link_node_content()");
         let node_getter = node.capabilities
             .get
             .as_ref()
@@ -738,12 +820,15 @@ impl<'a> Validator<'a> {
         }
     }
 
+    /// Performs validation of the textual content of a text node.
+    ///
+    /// Returns `None` if valid.
     fn validate_general_node_content(
         &self,
         node: &Node,
         rx: &Node,
     ) -> HowserResult<Option<ValidationProblem>> {
-        trace!("validate_general_node_content");
+        trace!("validate_general_node_content()");
         let rx_getter = rx.capabilities
             .get
             .as_ref()
@@ -770,12 +855,12 @@ impl<'a> Validator<'a> {
         Ok(None)
     }
 
-    /// Determines if the given content is a valid match for the given prompted content.
+    /// Determines if the given text is a valid match for the given prescription text.
     fn match_contents(
         node_content: &String,
         rx_content: &String,
     ) -> HowserResult<Vec<ContentMatchPair>> {
-        trace!("match_contents");
+        trace!("match_contents()");
         let mut content_queue = node_content.clone();
         let mut prompts = VecDeque::from(Validator::tokenize_prompts(rx_content)?);
         let mut left_stack = Vec::new();
@@ -890,7 +975,7 @@ impl<'a> Validator<'a> {
 
     /// Returns a vector of PromptToken parsed from the given string.
     fn tokenize_prompts(content: &String) -> HowserResult<Vec<PromptToken>> {
-        trace!("tokenize_prompts");
+        trace!("tokenize_prompts()");
         let prompt_pattern = Regex::new(CONTENT_PROMPT_PATTERN)?;
         let mut tail = content.to_string();
         let mut tokens = Vec::new();
@@ -921,8 +1006,11 @@ impl<'a> Validator<'a> {
     }
 }
 
+/// Determines if two `Node` are of equivalent type.
+///
+/// Takes into account heading levels and list types.
 pub fn types_match(node: &Node, other: &Node) -> HowserResult<bool> {
-    trace!("types_match");
+    trace!("types_match()");
     let node_getter = node.capabilities
         .get
         .as_ref()
@@ -940,16 +1028,30 @@ pub fn types_match(node: &Node, other: &Node) -> HowserResult<bool> {
         if node_type == NodeType::CMarkNodeHeading {
             let node_level = node_getter.get_heading_level()?;
             let rx_level = rx_getter.get_heading_level()?;
-            return Ok(node_level == rx_level);
+            if node_level == rx_level {
+                info!("types_match:: Headings match");
+                return Ok(true);
+            } else {
+                debug!("types_match:: Heading level mismatch");
+                return Ok(false);
+            }
         } else if node_type == NodeType::CMarkNodeList {
             let node_list_type = node_getter.get_list_type()?;
             let rx_list_type = rx_getter.get_list_type()?;
-            return Ok(node_list_type == rx_list_type);
+            if node_list_type == rx_list_type {
+                info!("types_match:: List types match");
+                return Ok(true);
+            } else {
+                debug!("types_match:: List type mismatch");
+                return Ok(false);
+            }
         } else {
+            info!("types_match:: Match!");
             return Ok(true);
         }
     }
 
+    debug!("types_match:: node: {:?} does not match rx: {:?}", node, other);
     Ok(false)
 }
 
@@ -1325,6 +1427,29 @@ mod tests {
             second_validator.validate().unwrap().is_some(),
             "The mandatory prompted paragraph did not fail against empty document."
         );
+    }
+
+    #[test]
+    fn test_optional_repeatable_list_item_match() {
+        let rx_text = "* Foo -!!-\n* -??-\n* Bar -!!-\n* -\"\"-";
+        let match_text_1 = "* Foo Foo";
+        let match_text_2 = "* Foo Foo\n* Bar Bar\n* Bar Baz";
+
+        let rx_root_1 = parse_document(&rx_text.to_string());
+        let rx_root_2 = parse_document(&rx_text.to_string());
+        let doc_root_1 = parse_document(&match_text_1.to_string());
+        let doc_root_2 = parse_document(&match_text_2.to_string());
+
+        let rx_1 = Document::new(&rx_root_1, None).into_prescription().unwrap();
+        let rx_2 = Document::new(&rx_root_2, None).into_prescription().unwrap();
+        let doc_1 = Document::new(&doc_root_1, None);
+        let doc_2 = Document::new(&doc_root_2, None);
+
+        let validator_1 = Validator::new(rx_1, doc_1);
+        let validator_2 = Validator::new(rx_2, doc_2);
+
+        assert!(validator_1.validate().unwrap().is_none(), "Absence of optional items caused mismatch");
+        assert!(validator_2.validate().unwrap().is_none(), "Presence of optional items caused mismatch");
     }
 
     proptest! {
