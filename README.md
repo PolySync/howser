@@ -22,9 +22,9 @@ along with Howser.  If not, see <http://www.gnu.org/licenses/>.
 ## Overview
 
 Howser is a command line tool for verifying document conformance via the [rx spec](https://github.com/PolySync/rx).
-If your organization frequently produces Markdown documentation, and it would be nice to ensure that all that 
-documentation contained certain shapes of things without having to go through it all by hand, then this is the tool for 
-you. For instance, you could use Howser as part of a build system to verify that all your projects have 
+If your organization frequently produces Markdown documentation, and it would be nice to ensure that all that
+documentation contained certain shapes of things without having to go through it all by hand, then this is the tool for
+you. For instance, you could use Howser as part of a build system to verify that all your projects have
 sensible README files and consistently formatted requirements documentation.
 
 ## Getting Started
@@ -35,75 +35,101 @@ sensible README files and consistently formatted requirements documentation.
 
 ### Building
 
-```Shell
+Howser can be built using the normal cargo invocation.
+
+```
 $ cargo build
+```
+
+### Installation
+
+Howser can be installed using the cargo command.
+
+```
 $ cargo install
 ```
 
 ## Usage
 
-`howser [FLAGS] [SUBCOMMAND]`
+Howser is a command line tool with two major functions. Checking a prescription
+file for conformity to the Rx spec and Validating a markdown document against
+a prescription file. The checking function is applied implicitly as part of
+validation.
 
-### Flags
+```
+$ howser --help
 
-`-h, --help` Prints help information.
+Howser 0.1.0
+Document conformity validator for the Rx spec.
 
-`-V, --version` Prints version information.
+USAGE:
+    howser [FLAGS] [SUBCOMMAND]
 
-`-v, --verbose` Uses verbose (multi-line) output for errors and warnings.
+FLAGS:
+    -h, --help       Prints help information
+    -V, --version    Prints version information
+    -v, --verbose    Use verbose (multiline) output for errors and warnings.
 
-### Subcommands
-
-`check <Filename>` Checks that a document intended for use as a prescription conforms to the Rx spec.  
-
-`validate <Prescription> <Document>` Perform validation of a Markdown document against an Rx prescription file.
-
-`help <Subcommand>` Print out help information on a subcommand.
+SUBCOMMANDS:
+    check       Checks that a document intended for use as a prescription conforms to the Rx spec.
+    help        Prints this message or the help of the given subcommand(s)
+    validate    Validate a Markdown document against an Rx Prescription file.
+```
 
 ### Examples
 
-Checking valid and invalid prescription files from the examples directory.  
+* Checking valid and invalid prescription files from the examples directory.  
+    ```
+    $ howser check examples/template.rx
+    Valid Rx!
+    ```
 
-```Shell
-$ howser check examples/template.rx
-Valid Rx!
-```
+    ```
+    $ howser check examples/bad_template.rx
+    SpecWarning :: examples/bad_template.rx line 1 :: An element with a Ditto prompt must be preceded by an element of the same type.
 
-```Shell
-$ howser check examples/bad_template.rx
-SpecWarning :: examples/bad_template.rx line 1 :: An element with a Ditto prompt must be preceded by an element of the same type.
+    Invalid Rx
+    ```
 
-Invalid Rx
-```
+* Validating conforming and non-conforming markdown files against the
+prescription file `wizard.rx` from the examples directory.
 
-Validating conforming and non-conforming markdown files against the prescription file `wizard.rx` from the examples directory.
+    ```
+    $ howser validate examples/wizard.rx examples/wizard.md
+    Rx Filled!
+    ```
 
-```Shell
-$ howser validate examples/wizard.rx examples/wizard.md
-Rx Filled!
-```
+    ```
+    $ howser validate examples/wizard.rx examples/not_the_wizard.md
+    Document Error :: examples/wizard.rx line 1, examples/not_the_wizard.md line 1 :: Missing mandatory node.
 
-```Shell
-$ howser validate examples/wizard.rx examples/not_the_wizard.md
-Document Error :: examples/wizard.rx line 1, examples/not_the_wizard.md line 1 :: Missing mandatory node.
-
-Rx Rejected!
-```
+    Rx Rejected!
+    ```
 
 ## Tests
 
 Howser contains both unit tests and property based tests. The unit tests provide coverage for application logic and
-certain specific document validation scenarios while the property based tests target broad coverage of 
+certain specific document validation scenarios while the property based tests target broad coverage of
 arbitrarily generated validation scenarios.
 
-### Running Tests
+### Building
 
-```Shell
+The tests are automatically built by cargo when the test runner is invoked. They can also be built on their own.
+
+```
+$ cargo build --tests
+```
+
+### Running
+
+The tests are run using cargo. Running the tests will trigger their compilation
+if an up-to-date build of them has not been previously performed.
+
+```
 $ cargo test
 ```
 
 # License
 
 © 2018, PolySync Technologies, Inc., Devin Smith <dsmith@polysync.io>
-
-[GPL version 3](https://github.com/PolySync/howser/blob/master/LICENSE)
+Please see the [LICENSE](./LICENSE) file for more details
