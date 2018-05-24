@@ -78,7 +78,7 @@ SUBCOMMANDS:
 
 ### Examples
 
-* Checking valid and invalid prescription files from the examples directory.  
+* Checking valid and invalid prescription files from the examples directory.
     ```
     $ howser check examples/template.rx
     Valid Rx!
@@ -131,5 +131,8 @@ $ cargo test
 
 # License
 
-© 2018, PolySync Technologies, Inc., Devin Smith <dsmith@polysync.io>
+© 2018, PolySync Technologies, Inc.
+
+* Devin Smith <dsmith@polysync.io>
+
 Please see the [LICENSE](./LICENSE) file for more details
