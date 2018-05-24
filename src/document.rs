@@ -4,8 +4,8 @@ extern crate env_logger;
 extern crate regex;
 extern crate unicode_segmentation;
 
+//use self::unicode_segmentation::UnicodeSegmentation;
 use self::regex::Regex;
-use self::unicode_segmentation::UnicodeSegmentation;
 use constants::{DITTO_TOKEN, MANDATORY_PROMPT, OPTIONAL_PROMPT, PROMPT_PATTERN};
 use data::ElementType;
 use data::{MatchType, NodeData};
@@ -61,14 +61,10 @@ impl LookaheadType {
                     MatchType::Repeatable => Ok(LookaheadType::Ditto(node)),
                     MatchType::None => Ok(LookaheadType::IntegratedLiteral(node)),
                     _ => {
-                        if let Some(annotation) = node.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.first_child()? {
-                            if annotation.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.next_sibling()?.is_some() {
-                                Ok(LookaheadType::IntegratedOccupied(node, match_type))
-                            } else {
-                                Ok(LookaheadType::IntegratedVacant(node, match_type))
-                            }
+                        if LookaheadType::is_vacant(&node)? {
+                            Ok(LookaheadType::IntegratedVacant(node, match_type))
                         } else {
-                            Err(HowserError::RuntimeError("Lookahead Error: Got a match type, but no annotation node was present.".to_string()))
+                            Ok(LookaheadType::IntegratedOccupied(node, match_type))
                         }
                     },
                 },
@@ -85,6 +81,22 @@ impl LookaheadType {
             Ok(LookaheadType::Other(None))
         }
     }
+
+    /// Determines whether the given integrated node has content other than its annotation.
+    fn is_vacant(node: &Node) -> HowserResult<bool> {
+        match node.capabilities.get.as_ref().ok_or(HowserError::CapabilityError)?.get_type()? {
+            NodeType::CMarkNodeCodeBlock => {
+                Ok(node.capabilities.get.as_ref().ok_or(HowserError::CapabilityError)?.get_content()?.is_empty())
+            },
+            _ => {
+                if let Some(annotation) = node.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.first_child()? {
+                    Ok(annotation.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.next_sibling()?.is_none())
+                } else {
+                    Err(HowserError::RuntimeError("Lookahead Error: Got a match type, but no annotation node was present.".to_string()))
+                }
+            }
+        }
+    }
 }
 
 /// Wrapper for a Markdown document that manages extra metadata about the `Node`s contained within
@@ -97,12 +109,18 @@ pub struct Document<'a> {
 
 impl<'a> Document<'a> {
     /// Returns a new `Document`.
-    pub fn new(root: &'a Node, filename: Option<String>) -> Self {
-        Document {
+    ///
+    /// Note that this is a destructive operation to the root node. It will mutate the internal
+    /// structure of the tree. The reason for taking a reference and not ownership is to enable
+    /// compatibility with proptest generators.
+    pub fn new(root: &'a Node, filename: Option<String>) -> HowserResult<Self> {
+        strip_comments(root)?;
+
+        Ok(Document {
             root,
             data: RefCell::new(HashMap::new()),
             filename,
-        }
+        })
     }
 
     /// Transform this `Document` instance into a `Prescription`.
@@ -764,6 +782,19 @@ fn extract_match_type(content: &String) -> HowserResult<(MatchType, String)> {
     }
 }
 
+fn strip_comments(root: &Node) -> HowserResult<()> {
+    for (node, _) in root.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.iter() {
+        match node.capabilities.get.as_ref().ok_or(HowserError::CapabilityError)?.get_type()? {
+            NodeType::CMarkNodeHtmlInline | NodeType::CMarkNodeHtmlBlock => {
+                node.capabilities.mutate.as_ref().ok_or(HowserError::CapabilityError)?.unlink();
+            },
+            _ => ()
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::process_child_block_elements;
@@ -785,7 +816,7 @@ mod tests {
             let mut test_template = template_content.clone();
             test_template.insert_str(0, &format!("{}\n", prompt.to_string()));
             let root = parse_document(&test_template);
-            let document = Document::new(&root, None);
+            let document = Document::new(&root, None)?;
 
             process_child_block_elements(&document.root, &document).unwrap();
 
@@ -812,7 +843,7 @@ mod tests {
         fn test_wildcard_paragraphs_are_processed(ref prompt in prop_oneof![Just(PromptToken::Mandatory),Just(PromptToken::Optional)]) {
             let template_content = prompt.to_string();
             let root = parse_document(&template_content);
-            let document = Document::new(&root, None);
+            let document = Document::new(&root, None)?;
 
             process_child_block_elements(&document.root, &document).unwrap();
 
@@ -834,7 +865,7 @@ mod tests {
         fn test_literal_paragraphs_are_processed(ref paragraph in arb_paragraph_match(2..10)) {
             let (template_content, _) = serialize_match_seq(paragraph);
             let root = parse_document(&template_content);
-            let document = Document::new(&root, None);
+            let document = Document::new(&root, None)?;
 
             process_child_block_elements(&root, &document).unwrap();
 
@@ -859,7 +890,7 @@ mod tests {
             test_template.push_str("\n\n-\"\"-");
 
             let root = parse_document(&test_template);
-            let document = Document::new(&root, None);
+            let document = Document::new(&root, None)?;
 
             process_child_block_elements(&root, &document).unwrap();
 

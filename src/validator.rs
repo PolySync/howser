@@ -127,7 +127,7 @@ impl<'a> Validator<'a> {
                 parent_rx_node,
                 &self.document,
                 &self.prescription,
-                "Superfluous Nodes were present.".to_string(),
+                "Superfluous block content was present.".to_string(),
             )?;
             Ok(Some(Box::new(error)))
         } else {
@@ -679,7 +679,18 @@ impl<'a> Validator<'a> {
             }
         }
 
-        Ok(None)
+        if let Some(extra_node) = current_node {
+            let error = DocumentError::new(
+                &extra_node,
+                parent_rx,
+                &self.document,
+                &self.prescription,
+                "Superfluous inline content was present.".to_string(),
+            )?;
+            Ok(Some(Box::new(error)))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Determines if `node` matches `rx`.
@@ -1069,8 +1080,8 @@ mod tests {
         let text = "The quick brown fox jumps over the dog.".to_string();
         let rx_root = parse_document(&text);
         let doc_root = parse_document(&text);
-        let rx = Document::new(&rx_root, None).into_prescription().unwrap();
-        let doc = Document::new(&doc_root, None);
+        let rx = Document::new(&rx_root, None).unwrap().into_prescription().unwrap();
+        let doc = Document::new(&doc_root, None).unwrap();
         let validator = Validator::new(rx, doc);
 
         let report = validator.validate().unwrap();
@@ -1082,8 +1093,8 @@ mod tests {
     fn test_literal_paragraph_mismatch() {
         let rx_root = parse_document(&"The quick brown fox jumps over the dog.".to_string());
         let doc_root = parse_document(&"The slow brown fox jumps over the dog.".to_string());
-        let rx = Document::new(&rx_root, None).into_prescription().unwrap();
-        let doc = Document::new(&doc_root, None);
+        let rx = Document::new(&rx_root, None).unwrap().into_prescription().unwrap();
+        let doc = Document::new(&doc_root, None).unwrap();
         let validator = Validator::new(rx, doc);
 
         let report = validator.validate().unwrap();
@@ -1096,8 +1107,8 @@ mod tests {
         let text = "*Compile* the code `let a = 12;` using `cargo build`.".to_string();
         let rx_root = parse_document(&text);
         let doc_root = parse_document(&text);
-        let rx = Document::new(&rx_root, None).into_prescription().unwrap();
-        let doc = Document::new(&doc_root, None);
+        let rx = Document::new(&rx_root, None).unwrap().into_prescription().unwrap();
+        let doc = Document::new(&doc_root, None).unwrap();
         let validator = Validator::new(rx, doc);
 
         let report = validator.validate().unwrap();
@@ -1110,8 +1121,22 @@ mod tests {
         let rx_root =
             parse_document(&"*Compile* the code `let a = 12;` using `cargo build`.".to_string());
         let doc_root = parse_document(&"*Compile* the code `let a = 12;`.".to_string());
-        let rx = Document::new(&rx_root, None).into_prescription().unwrap();
-        let doc = Document::new(&doc_root, None);
+        let rx = Document::new(&rx_root, None).unwrap().into_prescription().unwrap();
+        let doc = Document::new(&doc_root, None).unwrap();
+        let validator = Validator::new(rx, doc);
+
+        let report = validator.validate().unwrap();
+
+        assert!(report.is_some());
+    }
+
+    #[test]
+    fn test_literal_mixed_paragraph_superflous_content() {
+        let rx_root =
+            parse_document(&"-!!- (-!!-)[-!!-]".to_string());
+        let doc_root = parse_document(&"Joe Schmoe <jschmoe@polysync.io> blargh".to_string());
+        let rx = Document::new(&rx_root, None).unwrap().into_prescription().unwrap();
+        let doc = Document::new(&doc_root, None).unwrap();
         let validator = Validator::new(rx, doc);
 
         let report = validator.validate().unwrap();
@@ -1126,10 +1151,10 @@ mod tests {
             parse_document(&"The quick brown fox jumps overthrows the dog.".to_string());
         let match_2_root = parse_document(&"The quick brown fox slinks over.".to_string());
 
-        let rx_1 = Document::new(&rx_root, None).into_prescription().unwrap();
-        let rx_2 = Document::new(&rx_root, None).into_prescription().unwrap();
-        let doc_1 = Document::new(&match_1_root, None);
-        let doc_2 = Document::new(&match_2_root, None);
+        let rx_1 = Document::new(&rx_root, None).unwrap().into_prescription().unwrap();
+        let rx_2 = Document::new(&rx_root, None).unwrap().into_prescription().unwrap();
+        let doc_1 = Document::new(&match_1_root, None).unwrap();
+        let doc_2 = Document::new(&match_2_root, None).unwrap();
 
         let validator_1 = Validator::new(rx_1, doc_1);
         let validator_2 = Validator::new(rx_2, doc_2);
@@ -1145,8 +1170,8 @@ mod tests {
     fn test_prompted_text_mismatch() {
         let rx_root = parse_document(&"The quick brown fox -!!- over-??-.".to_string());
         let match_root = parse_document(&"The quick brown fox over.".to_string());
-        let rx = Document::new(&rx_root, None).into_prescription().unwrap();
-        let doc = Document::new(&match_root, None);
+        let rx = Document::new(&rx_root, None).unwrap().into_prescription().unwrap();
+        let doc = Document::new(&match_root, None).unwrap();
         let validator = Validator::new(rx, doc);
 
         let report = validator.validate().unwrap();
@@ -1159,8 +1184,8 @@ mod tests {
         let text = "`let my_num: u32 = 42;`".to_string();
         let rx_root = parse_document(&text);
         let doc_root = parse_document(&text);
-        let rx = Document::new(&rx_root, None).into_prescription().unwrap();
-        let doc = Document::new(&doc_root, None);
+        let rx = Document::new(&rx_root, None).unwrap().into_prescription().unwrap();
+        let doc = Document::new(&doc_root, None).unwrap();
         let validator = Validator::new(rx, doc);
 
         let report = validator.validate().unwrap();
@@ -1172,8 +1197,8 @@ mod tests {
     fn test_literal_code_mismatch() {
         let rx_root = parse_document(&"`let my_num: u32 = 42;`".to_string());
         let doc_root = parse_document(&"`let my_num: u32 = 13;`".to_string());
-        let rx = Document::new(&rx_root, None).into_prescription().unwrap();
-        let doc = Document::new(&doc_root, None);
+        let rx = Document::new(&rx_root, None).unwrap().into_prescription().unwrap();
+        let doc = Document::new(&doc_root, None).unwrap();
         let validator = Validator::new(rx, doc);
 
         let report = validator.validate().unwrap();
@@ -1187,10 +1212,10 @@ mod tests {
         let match_1_root = parse_document(&"`let my_num: u32 = 42;`".to_string());
         let match_2_root = parse_document(&"`let the_answer = 4200;`".to_string());
 
-        let rx_1 = Document::new(&rx_root, None).into_prescription().unwrap();
-        let rx_2 = Document::new(&rx_root, None).into_prescription().unwrap();
-        let doc_1 = Document::new(&match_1_root, None);
-        let doc_2 = Document::new(&match_2_root, None);
+        let rx_1 = Document::new(&rx_root, None).unwrap().into_prescription().unwrap();
+        let rx_2 = Document::new(&rx_root, None).unwrap().into_prescription().unwrap();
+        let doc_1 = Document::new(&match_1_root, None).unwrap();
+        let doc_2 = Document::new(&match_2_root, None).unwrap();
 
         let validator_1 = Validator::new(rx_1, doc_1);
         let validator_2 = Validator::new(rx_2, doc_2);
@@ -1206,8 +1231,8 @@ mod tests {
     fn test_prompted_code_mismatch() {
         let rx_root = parse_document(&"`let -!!- = 42;`".to_string());
         let match_root = parse_document(&"`let = 42;`".to_string());
-        let rx = Document::new(&rx_root, None).into_prescription().unwrap();
-        let doc = Document::new(&match_root, None);
+        let rx = Document::new(&rx_root, None).unwrap().into_prescription().unwrap();
+        let doc = Document::new(&match_root, None).unwrap();
         let validator = Validator::new(rx, doc);
 
         let report = validator.validate().unwrap();
@@ -1219,8 +1244,8 @@ mod tests {
     fn test_mandatory_wildcard_paragraph_match() {
         let rx_root = parse_document(&"-!!-".to_string());
         let match_root = parse_document(&"Literally any content here".to_string());
-        let rx = Document::new(&rx_root, None).into_prescription().unwrap();
-        let doc = Document::new(&match_root, None);
+        let rx = Document::new(&rx_root, None).unwrap().into_prescription().unwrap();
+        let doc = Document::new(&match_root, None).unwrap();
         let validator = Validator::new(rx, doc);
 
         let report = validator.validate().unwrap();
@@ -1235,13 +1260,15 @@ mod tests {
         let match_root = parse_document(&"Literally any content here".to_string());
         let empty_match_root = parse_document(&String::new());
         let rx_1 = Document::new(&first_rx_root, None)
+            .unwrap()
             .into_prescription()
             .unwrap();
         let rx_2 = Document::new(&second_rx_root, None)
+            .unwrap()
             .into_prescription()
             .unwrap();
-        let doc = Document::new(&match_root, None);
-        let empty_doc = Document::new(&empty_match_root, None);
+        let doc = Document::new(&match_root, None).unwrap();
+        let empty_doc = Document::new(&empty_match_root, None).unwrap();
         let validator_1 = Validator::new(rx_1, doc);
         let validator_2 = Validator::new(rx_2, empty_doc);
 
@@ -1253,8 +1280,8 @@ mod tests {
     fn test_mandatory_wildcard_paragraph_mismatch() {
         let rx_root = parse_document(&"-!!-".to_string());
         let match_root = parse_document(&String::new());
-        let rx = Document::new(&rx_root, None).into_prescription().unwrap();
-        let doc = Document::new(&match_root, None);
+        let rx = Document::new(&rx_root, None).unwrap().into_prescription().unwrap();
+        let doc = Document::new(&match_root, None).unwrap();
         let validator = Validator::new(rx, doc);
 
         let report = validator.validate().unwrap();
@@ -1276,8 +1303,8 @@ mod tests {
         let rx_root = parse_document(&rx_text.to_string());
         let match_root = parse_document(&match_text.to_string());
 
-        let rx = Document::new(&rx_root, None).into_prescription().unwrap();
-        let doc = Document::new(&match_root, None);
+        let rx = Document::new(&rx_root, None).unwrap().into_prescription().unwrap();
+        let doc = Document::new(&match_root, None).unwrap();
         let validator = Validator::new(rx, doc);
 
         let report = validator.validate().unwrap();
@@ -1296,8 +1323,8 @@ mod tests {
         let rx_root = parse_document(&rx_text.to_string());
         let match_root = parse_document(&match_text.to_string());
 
-        let rx = Document::new(&rx_root, None).into_prescription().unwrap();
-        let doc = Document::new(&match_root, None);
+        let rx = Document::new(&rx_root, None).unwrap().into_prescription().unwrap();
+        let doc = Document::new(&match_root, None).unwrap();
         let validator = Validator::new(rx, doc);
 
         let report = validator.validate().unwrap();
@@ -1316,8 +1343,8 @@ mod tests {
         let rx_root = parse_document(&rx_text.to_string());
         let match_root = parse_document(&match_text.to_string());
 
-        let rx = Document::new(&rx_root, None).into_prescription().unwrap();
-        let doc = Document::new(&match_root, None);
+        let rx = Document::new(&rx_root, None).unwrap().into_prescription().unwrap();
+        let doc = Document::new(&match_root, None).unwrap();
         let validator = Validator::new(rx, doc);
 
         let report = validator.validate().unwrap();
@@ -1337,8 +1364,8 @@ mod tests {
         let rx_root = parse_document(&rx_text.to_string());
         let match_root = parse_document(&match_text.to_string());
 
-        let rx = Document::new(&rx_root, None).into_prescription().unwrap();
-        let doc = Document::new(&match_root, None);
+        let rx = Document::new(&rx_root, None).unwrap().into_prescription().unwrap();
+        let doc = Document::new(&match_root, None).unwrap();
         let validator = Validator::new(rx, doc);
 
         let report = validator.validate().unwrap();
@@ -1354,8 +1381,8 @@ mod tests {
         let rx_root = parse_document(&rx_text.to_string());
         let match_root = parse_document(&match_text.to_string());
 
-        let rx = Document::new(&rx_root, None).into_prescription().unwrap();
-        let doc = Document::new(&match_root, None);
+        let rx = Document::new(&rx_root, None).unwrap().into_prescription().unwrap();
+        let doc = Document::new(&match_root, None).unwrap();
 
         let validator = Validator::new(rx, doc);
 
@@ -1376,13 +1403,15 @@ mod tests {
         let second_match_root = parse_document(&second_match_text.to_string());
 
         let first_rx = Document::new(&first_rx_root, None)
+            .unwrap()
             .into_prescription()
             .unwrap();
         let second_rx = Document::new(&second_rx_root, None)
+            .unwrap()
             .into_prescription()
             .unwrap();
-        let first_doc = Document::new(&first_match_root, None);
-        let second_doc = Document::new(&second_match_root, None);
+        let first_doc = Document::new(&first_match_root, None).unwrap();
+        let second_doc = Document::new(&second_match_root, None).unwrap();
 
         let first_validator = Validator::new(first_rx, first_doc);
         let second_validator = Validator::new(second_rx, second_doc);
@@ -1408,13 +1437,15 @@ mod tests {
         let empty_root = parse_document(&String::new());
 
         let first_rx = Document::new(&first_rx_root, None)
+            .unwrap()
             .into_prescription()
             .unwrap();
         let second_rx = Document::new(&second_rx_root, None)
+            .unwrap()
             .into_prescription()
             .unwrap();
-        let first_doc = Document::new(&doc_root, None);
-        let second_doc = Document::new(&empty_root, None);
+        let first_doc = Document::new(&doc_root, None).unwrap();
+        let second_doc = Document::new(&empty_root, None).unwrap();
 
         let first_validator = Validator::new(first_rx, first_doc);
         let second_validator = Validator::new(second_rx, second_doc);
@@ -1440,10 +1471,10 @@ mod tests {
         let doc_root_1 = parse_document(&match_text_1.to_string());
         let doc_root_2 = parse_document(&match_text_2.to_string());
 
-        let rx_1 = Document::new(&rx_root_1, None).into_prescription().unwrap();
-        let rx_2 = Document::new(&rx_root_2, None).into_prescription().unwrap();
-        let doc_1 = Document::new(&doc_root_1, None);
-        let doc_2 = Document::new(&doc_root_2, None);
+        let rx_1 = Document::new(&rx_root_1, None).unwrap().into_prescription().unwrap();
+        let rx_2 = Document::new(&rx_root_2, None).unwrap().into_prescription().unwrap();
+        let doc_1 = Document::new(&doc_root_1, None).unwrap();
+        let doc_2 = Document::new(&doc_root_2, None).unwrap();
 
         let validator_1 = Validator::new(rx_1, doc_1);
         let validator_2 = Validator::new(rx_2, doc_2);
