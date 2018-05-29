@@ -1,10 +1,9 @@
+use super::content::matches::arb_content_matches;
+use data::{ContentMatchPair, PromptToken};
+use doogie::constants::NodeType;
+use doogie::{CapabilityFactory, Node, NodeFactory};
 use proptest::prelude::*;
 use std::ops::Range;
-use super::content::arb_comment;
-use super::content::matches::arb_content_matches;
-use data::{Comment, ContentMatchPair, PromptToken};
-use doogie::{CapabilityFactory, Node, NodeFactory};
-use doogie::constants::NodeType;
 use std::rc::Rc;
 
 #[derive(Debug)]
@@ -28,19 +27,16 @@ type MandatoryContainerMatchChild = MatchType;
 type LiteralContainerMatchChild = MatchType;
 type ArbitraryContainerMatchChild = MatchType;
 
-pub fn arb_paragraph_match(
-    elements: Range<usize>,
-) -> BoxedStrategy<(Vec<ContentMatchPair>, Option<Comment>)> {
+pub fn arb_paragraph_match(elements: Range<usize>) -> BoxedStrategy<Vec<ContentMatchPair>> {
     _arb_paragraph_match(elements)
 }
 prop_compose!{
     fn _arb_paragraph_match(elements: Range<usize>)
         (
-            match_pairs in arb_content_matches(elements, 1..10),
-            comment in prop::option::of(arb_comment(1..10))
-        ) -> (Vec<ContentMatchPair>, Option<Comment>)
+            match_pairs in arb_content_matches(elements, 1..10)
+        ) -> Vec<ContentMatchPair>
     {
-        (match_pairs, comment)
+        match_pairs
     }
 }
 
@@ -90,13 +86,11 @@ pub fn arbitrary_container_block_match() -> BoxedStrategy<MatchType> {
         .boxed()
 }
 
-pub fn container_block_match() -> BoxedStrategy<
-    (
-        MandatoryContainerMatchChild,
-        LiteralContainerMatchChild,
-        ArbitraryContainerMatchChild,
-    ),
-> {
+pub fn container_block_match() -> BoxedStrategy<(
+    MandatoryContainerMatchChild,
+    LiteralContainerMatchChild,
+    ArbitraryContainerMatchChild,
+)> {
     container_match_children()
         .prop_recursive(4, 32, 8, |children| {
             let mwc_container_match = Rc::new(

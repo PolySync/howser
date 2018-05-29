@@ -2,48 +2,50 @@
 
 extern crate regex;
 
-use helpers::cli::ShellText;
-use helpers::cli;
 use self::regex::Error as RegexError;
+use data::{ContentMatchPair, PromptToken};
+use document::{Document, Prescription};
+use doogie::errors::DoogieError;
+use doogie::Node;
+use helpers::cli;
+use helpers::cli::ShellText;
 use std::error;
 use std::fmt;
 use std::io::Error as IOError;
-use doogie::errors::DoogieError;
-use doogie::Node;
-use document::{Document, Prescription};
-use std::ops::Add;
-use data::{ContentMatchPair, PromptToken};
 
 /// Crate-wide Result type.
 pub type HowserResult<T> = Result<T, HowserError>;
-/// Convenience alias for validation reporting.
-pub type ValidationProblems = Option<Vec<Box<Reportable>>>;
+/// Type alias for `Reportable` trait object
+pub type ValidationProblem = Box<Reportable>;
 
 /// Error types for use with `HowserResult`.
 #[derive(Debug)]
 pub enum HowserError {
-    /// Wrapper for errors originating from the `remarkable` crate.
-    RemarkableError(DoogieError),
+    DoogieError(DoogieError),
     IOError(IOError),
     Usage(String),
     RuntimeError(String),
-    /// For handling instances where a `Node` does not have the required capabilities.
     CapabilityError,
     RegexError(RegexError),
-    PrescriptionError,
+    PrescriptionError(SpecWarning),
 }
 
 impl error::Error for HowserError {
     fn description(&self) -> &str {
         match self {
             &HowserError::Usage(ref message) => message.as_str(),
-            _ => "General Error",
+            &HowserError::DoogieError(ref error) => error.description(),
+            &HowserError::IOError(ref error) => error.description(),
+            &HowserError::RuntimeError(ref message) => message,
+            &HowserError::CapabilityError => "Capability Error",
+            &HowserError::RegexError(ref error) => error.description(),
+            &HowserError::PrescriptionError(_) => "Prescription Error"
         }
     }
 
     fn cause(&self) -> Option<&error::Error> {
         match self {
-            &HowserError::RemarkableError(ref error) => Some(error),
+            &HowserError::DoogieError(ref error) => Some(error),
             &HowserError::IOError(ref error) => Some(error),
             &HowserError::RegexError(ref error) => Some(error),
             _ => None,
@@ -65,7 +67,7 @@ impl From<IOError> for HowserError {
 
 impl From<DoogieError> for HowserError {
     fn from(err: DoogieError) -> Self {
-        HowserError::RemarkableError(err)
+        HowserError::DoogieError(err)
     }
 }
 
@@ -75,78 +77,7 @@ impl From<RegexError> for HowserError {
     }
 }
 
-/// Errors and warnings collected during the validation process.
-pub struct ValidationReport {
-    pub errors: ValidationProblems,
-    pub warnings: ValidationProblems,
-}
-
-impl ValidationReport {
-    pub fn new(errors: ValidationProblems, warnings: ValidationProblems) -> Self {
-        ValidationReport { errors, warnings }
-    }
-}
-
-impl Add for ValidationReport {
-    type Output = Self;
-
-    fn add(self, other: ValidationReport) -> Self {
-        let mut aggregated_errors = Vec::new();
-        let mut aggregated_warnings = Vec::new();
-
-        if let Some(mut errors) = self.errors {
-            aggregated_errors.append(&mut errors);
-        }
-        if let Some(mut errors) = other.errors {
-            aggregated_errors.append(&mut errors);
-        }
-        if let Some(mut warnings) = self.warnings {
-            aggregated_warnings.append(&mut warnings);
-        }
-        if let Some(mut warnings) = other.warnings {
-            aggregated_warnings.append(&mut warnings);
-        }
-
-        ValidationReport {
-            errors: match aggregated_errors.is_empty() {
-                true => None,
-                false => Some(aggregated_errors),
-            },
-            warnings: match aggregated_warnings.is_empty() {
-                true => None,
-                false => Some(aggregated_warnings),
-            },
-        }
-    }
-}
-
-/// Final result of the validation process.
-///
-/// Contains the final verdict on validity along with the reportable info.
-pub struct ValidationResult {
-    report: ValidationReport,
-    valid: bool,
-}
-
-impl ValidationResult {
-    pub fn new(report: ValidationReport, valid: bool) -> ValidationResult {
-        ValidationResult { report, valid }
-    }
-
-    pub fn get_warnings<'a>(&'a self) -> &'a ValidationProblems {
-        &self.report.warnings
-    }
-
-    pub fn get_errors<'a>(&'a self) -> &'a ValidationProblems {
-        &self.report.errors
-    }
-
-    pub fn is_valid(&self) -> bool {
-        self.valid
-    }
-}
-
-/// Trait for reporting validation problems.
+/// Trait for aggregating validation problems.
 pub trait Reportable {
     /// Report in standard single line format.
     fn short_msg(&self) -> String;
@@ -159,6 +90,7 @@ pub trait Reportable {
 }
 
 /// A warning related to `Prescription` specification compliance issues.
+#[derive(Debug)]
 pub struct SpecWarning {
     line: u32,
     file: String,
@@ -166,14 +98,14 @@ pub struct SpecWarning {
 }
 
 impl SpecWarning {
-    pub fn new(node: &Node, rx: &Prescription, message: &str) -> HowserResult<Self> {
+    pub fn new(node: &Node, rx: &Document, message: &str) -> HowserResult<Self> {
         let getter = node.capabilities
             .get
             .as_ref()
             .ok_or(HowserError::CapabilityError)?;
 
         let line = getter.get_start_line()?;
-        let file = match rx.document.filename.as_ref() {
+        let file = match rx.filename.as_ref() {
             Some(filename) => filename.clone(),
             None => String::new(),
         };
@@ -242,19 +174,19 @@ impl DocumentError {
             .as_ref()
             .ok_or(HowserError::CapabilityError)?;
 
-        let _rx_getter = rx_node
+        let rx_getter = rx_node
             .capabilities
             .get
             .as_ref()
             .ok_or(HowserError::CapabilityError)?;
-        let _rx_renderer = rx_node
+        let rx_renderer = rx_node
             .capabilities
             .render
             .as_ref()
             .ok_or(HowserError::CapabilityError)?;
 
         let document_line = doc_node_getter.get_start_line()?;
-        let rx_line = doc_node_getter.get_start_line()?;
+        let rx_line = rx_getter.get_start_line()?;
         let document_file = document
             .filename
             .as_ref()
@@ -266,7 +198,7 @@ impl DocumentError {
             .unwrap_or(&String::new())
             .to_string();
         let document_snippet = doc_node_renderer.render_commonmark();
-        let rx_snippet = _rx_renderer.render_commonmark();
+        let rx_snippet = rx_renderer.render_commonmark();
 
         Ok(DocumentError {
             document_line,
@@ -421,18 +353,18 @@ impl Reportable for ContentError {
                         ))).to_string()
                     }
                     &ContentMatchPair(PromptToken::Literal(ref required), None) => {
-                        let required_content = ShellText::ErrorColor(Box::new(
-                            ShellText::Literal(required.clone()),
-                        )).to_string();
+                        let required_content = ShellText::ErrorColor(Box::new(ShellText::Literal(
+                            required.clone(),
+                        ))).to_string();
                         format!(
                             "The required literal content '{}' was missing.",
                             required_content
                         )
                     }
                     &ContentMatchPair(PromptToken::Literal(ref required), Some(ref found)) => {
-                        let required_content = ShellText::ErrorColor(Box::new(
-                            ShellText::Literal(required.clone()),
-                        )).to_string();
+                        let required_content = ShellText::ErrorColor(Box::new(ShellText::Literal(
+                            required.clone(),
+                        ))).to_string();
                         let found_content = ShellText::ErrorColor(Box::new(ShellText::Literal(
                             found.clone(),
                         ))).to_string();
