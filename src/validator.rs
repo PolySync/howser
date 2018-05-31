@@ -85,7 +85,7 @@ impl<'a> Validator<'a> {
         parent_rx_node: &Node,
         parent_doc_node: &Node,
     ) -> HowserResult<Option<ValidationProblem>> {
-        trace!("validate_sibling_blocks()");
+        trace!("validate_sibling_blocks::");
         let parent_rx_traverser = parent_rx_node
             .capabilities
             .traverse
@@ -112,8 +112,7 @@ impl<'a> Validator<'a> {
                     current_rx = rx;
                     current_node = node;
                     current_bookmark = new_bookmark;
-                    // update local state
-                }
+                },
                 MatchResult::Error(errors) => {
                     return Ok(Some(errors));
                 }
@@ -131,7 +130,67 @@ impl<'a> Validator<'a> {
             )?;
             Ok(Some(Box::new(error)))
         } else {
-            debug!("validate_sibling_blocks:: Blocks were valid");
+            debug!("validate_sibling_blocks:: Valid!");
+            Ok(None)
+        }
+    }
+
+
+    /// Performs validation on a set of sibling inline elements.
+    ///
+    /// Returns `None` if the siblings are valid.
+    fn validate_sibling_inlines(
+        &self,
+        parent_rx: &Node,
+        parent_node: &Node,
+    ) -> HowserResult<Option<ValidationProblem>> {
+        trace!("validate_sibling_inlines::");
+        let parent_rx_traverser = parent_rx
+            .capabilities
+            .traverse
+            .as_ref()
+            .ok_or(HowserError::CapabilityError)?;
+        let parent_node_traverser = parent_node
+            .capabilities
+            .traverse
+            .as_ref()
+            .ok_or(HowserError::CapabilityError)?;
+
+        let mut current_rx = parent_rx_traverser.first_child()?;
+        let mut current_node = parent_node_traverser.first_child()?;
+        let mut current_bookmark = parent_node_traverser.first_child()?;
+
+        while let Some(rx) = current_rx {
+            match self.consume_inline_match(rx, current_node, current_bookmark, parent_node)? {
+                MatchResult::State(state) => {
+                    let MatchState {
+                        rx,
+                        node,
+                        bookmark: new_bookmark
+                    } = state;
+
+                    current_rx = rx;
+                    current_node = node;
+                    current_bookmark = new_bookmark;
+                },
+                MatchResult::Error(err) => {
+                    return Ok(Some(err));
+                }
+            }
+        }
+
+        if let Some(extra_node) = current_node {
+            debug!("validate_sibling_inlines:: Superfluous node error");
+            let error = DocumentError::new(
+                &extra_node,
+                parent_rx,
+                &self.document,
+                &self.prescription,
+                "Superfluous inline content was present.".to_string(),
+            )?;
+            Ok(Some(Box::new(error)))
+        } else {
+            debug!("validate_sibling_inlines:: Valid!");
             Ok(None)
         }
     }
@@ -145,7 +204,7 @@ impl<'a> Validator<'a> {
         bookmark: Option<Node>,
         parent_node: &Node,
     ) -> HowserResult<MatchResult> {
-        trace!("consume_block_match()");
+        trace!("consume_block_match::");
         if let Some(ref node) = node {
             info!(
                 "{}",
@@ -184,7 +243,7 @@ impl<'a> Validator<'a> {
                         &rx,
                         &self.document,
                         &self.prescription,
-                        "Missing mandatory node.".to_string(),
+                        "Missing mandatory block node.".to_string(),
                     )?;
                     Ok(MatchResult::Error(Box::new(error)))
                 }
@@ -202,6 +261,59 @@ impl<'a> Validator<'a> {
                     node,
                     bookmark,
                 }))
+            }
+        }
+    }
+
+    fn consume_inline_match(&self, rx: Node, node: Option<Node>, bookmark: Option<Node>, parent_node: &Node) -> HowserResult<MatchResult> {
+        trace!("consume_inline_match::");
+        if let Some(ref node) = node {
+            info!(
+                "{}",
+                node
+                    .capabilities
+                    .render
+                    .as_ref()
+                    .unwrap()
+                    .render_xml()
+            );
+        }
+        info!(
+            "{}",
+            rx
+                .capabilities
+                .render
+                .as_ref()
+                .unwrap()
+                .render_xml()
+        );
+
+        match self.prescription.document.get_match_type(&rx)? {
+            MatchType::Optional => {
+                let OptionalMatchOutput {
+                    rx,
+                    node
+                } = self.consume_optional_inline_match(OptionalMatchInput {rx, node})?;
+
+                Ok(MatchResult::State(MatchState {rx, node, bookmark}))
+            },
+            MatchType::Mandatory => {
+                if let Some(bookmark) = bookmark {
+                    self.consume_mandatory_inline_match(MandatoryMatchInput {rx, node, bookmark}, parent_node)
+                } else {
+                    debug!("consume_block_match:: Missing Mandatory node and no bookmark");
+                    let error = DocumentError::new(
+                        parent_node,
+                        &rx,
+                        &self.document,
+                        &self.prescription,
+                        "Missing mandatory inline node.".to_string(),
+                    )?;
+                    Ok(MatchResult::Error(Box::new(error)))
+                }
+            },
+            mt => {
+                Err(HowserError::RuntimeError(format!("Inline nodes should not have match type: {:?}", mt)))
             }
         }
     }
@@ -361,7 +473,7 @@ impl<'a> Validator<'a> {
                     .as_ref()
                     .ok_or(HowserError::CapabilityError)?
                     .itself()?);
-                let next_bookmark = match self.scan_for_match(&bookmark, &end_node, &rx)? {
+                let next_bookmark = match self.scan_for_block_match(&bookmark, &end_node, &rx)? {
                     Some(node) => node.capabilities
                         .traverse
                         .as_ref()
@@ -391,7 +503,7 @@ impl<'a> Validator<'a> {
                     .as_ref()
                     .ok_or(HowserError::CapabilityError)?
                     .itself()?);
-                if let Some(prev_match) = self.scan_for_match(&bookmark, &end_node, &rx)? {
+                if let Some(prev_match) = self.scan_for_block_match(&bookmark, &end_node, &rx)? {
                     let match_traverser = prev_match
                         .capabilities
                         .traverse
@@ -423,7 +535,7 @@ impl<'a> Validator<'a> {
                 }
             }
         } else {
-            if let Some(prev_match) = self.scan_for_match(&bookmark, &None, &rx)? {
+            if let Some(prev_match) = self.scan_for_block_match(&bookmark, &None, &rx)? {
                 let match_traverser = prev_match
                     .capabilities
                     .traverse
@@ -501,17 +613,133 @@ impl<'a> Validator<'a> {
         }
     }
 
+    fn consume_optional_inline_match(&self, input: OptionalMatchInput) -> HowserResult<OptionalMatchOutput> {
+        trace!("consume_optional__inline_match");
+        let OptionalMatchInput {
+            rx,
+            node
+        } = input;
+
+        if let Some(node) = node {
+            if self.inline_matches(&rx, &node)? {
+                let next_node = node.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.next_sibling()?;
+                let next_rx = rx.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.next_sibling()?;
+                Ok(OptionalMatchOutput {
+                    rx: next_rx,
+                    node: next_node
+                })
+            } else {
+                let next_rx = rx.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.next_sibling()?;
+                Ok(OptionalMatchOutput {
+                    rx: next_rx,
+                    node: Some(node)
+                })
+            }
+        } else {
+            let next_rx = rx.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.next_sibling()?;
+            Ok(OptionalMatchOutput {
+                rx: next_rx,
+                node
+            })
+        }
+    }
+
+    fn consume_mandatory_inline_match(
+        &self,
+        input: MandatoryMatchInput,
+        parent_node: &Node
+    ) -> HowserResult<MatchResult> {
+        trace!("consume_mandatory_inline_match::");
+        let MandatoryMatchInput {
+            rx,
+            node,
+            bookmark
+        } = input;
+
+        if let Some(node) = node {
+            if self.inline_matches(&rx, &node)? {
+                let end_node = Some(node.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.itself()?);
+                let next_bookmark = match self.scan_for_inline_match(&bookmark, &end_node, &rx)? {
+                    Some(node) => node.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.next_sibling()?,
+                    None => None
+                };
+                let next_node = node.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.next_sibling()?;
+                let next_rx = rx.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.next_sibling()?;
+                info!("consume_mandatory_inline_match:: Matched!");
+                Ok(MatchResult::State(MatchState {
+                    rx: next_rx,
+                    node: next_node,
+                    bookmark: next_bookmark
+                }))
+            } else {
+                let end_node = Some(node.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.itself()?);
+                if let Some(prev_match) = self.scan_for_inline_match(&bookmark, &end_node, &rx)? {
+                    let next_bookmark = prev_match.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.next_sibling()?;
+                    let next_node = prev_match.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.next_sibling()?;
+                    let next_rx = rx.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.next_sibling()?;
+                    info!("consume_mandatory_inline_match:: Bookmark Match Found!");
+                    Ok(MatchResult::State(MatchState {
+                        rx: next_rx,
+                        node: next_node,
+                        bookmark: next_bookmark
+                    }))
+                } else {
+                    debug!("consume_mandatory_inline_match:: Bookmark search failed, no match for {:?}", rx);
+                    let error = DocumentError::new(
+                        parent_node,
+                        &rx,
+                        &self.document,
+                        &self.prescription,
+                        "Missing mandatory node.".to_string(),
+                    )?;
+                    Ok(MatchResult::Error(Box::new(error)))
+                }
+            }
+        } else {
+            if let Some(prev_match) = self.scan_for_inline_match(&bookmark, &None, &rx)? {
+                let match_traverser = prev_match
+                    .capabilities
+                    .traverse
+                    .as_ref()
+                    .ok_or(HowserError::CapabilityError)?;
+                let next_bookmark = match_traverser.next_sibling()?;
+                let next_node = match_traverser.next_sibling()?;
+                let next_rx = rx.capabilities
+                    .traverse
+                    .as_ref()
+                    .ok_or(HowserError::CapabilityError)?
+                    .next_sibling()?;
+                info!("consume_mandatory_inline_match:: Bookmark Match Found!");
+                Ok(MatchResult::State(MatchState {
+                    rx: next_rx,
+                    node: next_node,
+                    bookmark: next_bookmark,
+                }))
+            } else {
+                debug!("consume_mandatory_inline_match:: No current node and No match");
+                let error = DocumentError::new(
+                    parent_node,
+                    &rx,
+                    &self.document,
+                    &self.prescription,
+                    "Missing mandatory node.".to_string(),
+                )?;
+                Ok(MatchResult::Error(Box::new(error)))
+            }
+        }
+    }
+
     /// Searchs for a node that will pass validation among the given segment of adjacent siblings.
     ///
     /// Starts searching at `start_node` and progresses through to `end_node` until a match is
     /// found. Returns the first matched `Node` or `None` if a match could not be found.
-    fn scan_for_match(
+    fn scan_for_block_match(
         &self,
         start_node: &Node,
         end_node: &Option<Node>,
         rx: &Node,
     ) -> HowserResult<Option<Node>> {
-        trace!("scan_for_match()");
+        trace!("scan_for_block_match()");
         let mut current_node = Some(start_node
             .capabilities
             .traverse
@@ -551,6 +779,32 @@ impl<'a> Validator<'a> {
                     .as_ref()
                     .ok_or(HowserError::CapabilityError)?
                     .prev_sibling()?;
+            }
+        }
+
+        Ok(None)
+    }
+
+    fn scan_for_inline_match(&self, start_node: &Node, end_node: &Option<Node>, rx: &Node) -> HowserResult<Option<Node>> {
+        trace!("scan_for_inline_match::");
+        let mut current_node = Some(start_node.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.itself()?);
+
+        while let Some(node) = current_node {
+            if self.inline_matches(rx, &node)? {
+                return Ok(Some(node));
+            }
+
+            if let &Some(ref stop_node) = end_node {
+                let node_id = node.capabilities.get.as_ref().ok_or(HowserError::CapabilityError)?.get_id()?;
+                let stop_id = stop_node.capabilities.get.as_ref().ok_or(HowserError::CapabilityError)?.get_id()?;
+
+                if node_id == stop_id {
+                    current_node = None;
+                } else {
+                    current_node = node.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.next_sibling()?;
+                }
+            } else {
+                current_node = node.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.next_sibling()?;
             }
         }
 
@@ -619,79 +873,6 @@ impl<'a> Validator<'a> {
         }
     }
 
-    /// Performs validation on a set of sibling inline elements.
-    ///
-    /// Returns `None` if the siblings are valid.
-    fn validate_sibling_inlines(
-        &self,
-        parent_rx: &Node,
-        parent_node: &Node,
-    ) -> HowserResult<Option<ValidationProblem>> {
-        trace!("validate_sibling_inlines()");
-        let parent_rx_traverser = parent_rx
-            .capabilities
-            .traverse
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?;
-        let parent_node_traverser = parent_node
-            .capabilities
-            .traverse
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?;
-
-        let mut current_rx = parent_rx_traverser.first_child()?;
-        let mut current_node = parent_node_traverser.first_child()?;
-
-        while let Some(rx) = current_rx {
-            if let Some(node) = current_node {
-                if self.inline_matches(&rx, &node)? {
-                    current_rx = rx.capabilities
-                        .traverse
-                        .as_ref()
-                        .ok_or(HowserError::CapabilityError)?
-                        .next_sibling()?;
-                    current_node = node.capabilities
-                        .traverse
-                        .as_ref()
-                        .ok_or(HowserError::CapabilityError)?
-                        .next_sibling()?;
-                } else {
-                    debug!("validate_sibling_inlines:: Inline match Error");
-                    let error = DocumentError::new(
-                        &node,
-                        &rx,
-                        &self.document,
-                        &self.prescription,
-                        "Missing inline node.".to_string(),
-                    )?;
-                    return Ok(Some(Box::new(error)));
-                }
-            } else {
-                debug!("validate_sibling_inlines:: Missing node Error");
-                let error = DocumentError::new(
-                    &parent_node,
-                    &rx,
-                    &self.document,
-                    &self.prescription,
-                    "Missing inline node.".to_string(),
-                )?;
-                return Ok(Some(Box::new(error)));
-            }
-        }
-
-        if let Some(extra_node) = current_node {
-            let error = DocumentError::new(
-                &extra_node,
-                parent_rx,
-                &self.document,
-                &self.prescription,
-                "Superfluous inline content was present.".to_string(),
-            )?;
-            Ok(Some(Box::new(error)))
-        } else {
-            Ok(None)
-        }
-    }
 
     /// Determines if `node` matches `rx`.
     ///

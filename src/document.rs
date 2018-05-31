@@ -4,7 +4,6 @@ extern crate env_logger;
 extern crate regex;
 extern crate unicode_segmentation;
 
-//use self::unicode_segmentation::UnicodeSegmentation;
 use self::regex::Regex;
 use constants::{DITTO_TOKEN, MANDATORY_PROMPT, OPTIONAL_PROMPT, PROMPT_PATTERN};
 use data::ElementType;
@@ -212,6 +211,63 @@ pub struct Prescription<'a> {
     pub document: Document<'a>,
 }
 
+fn process_child_elements(parent: &Node, document: &Document) -> HowserResult<()> {
+    let child = parent
+        .capabilities
+        .traverse
+        .as_ref()
+        .ok_or(HowserError::CapabilityError)?
+        .first_child()?;
+
+    if let Some(ref node) = child {
+        match ElementType::determine(node)? {
+            ElementType::InlineContainer | ElementType::InlineLeaf => {
+                process_child_inline_elements(parent, document)
+            }
+            _ => process_child_block_elements(parent, document),
+        }
+    } else {
+        Ok(())
+    }
+}
+
+fn process_child_inline_elements(parent: &Node, document: &Document) -> HowserResult<()> {
+    let mut current_child = parent
+        .capabilities
+        .traverse
+        .as_ref()
+        .ok_or(HowserError::CapabilityError)?
+        .first_child()?;
+
+    while let Some(node) = current_child {
+        let getter = node.capabilities.get.as_ref().ok_or(HowserError::CapabilityError)?;
+        match getter.get_type()? {
+            NodeType::CMarkNodeText | NodeType::CMarkNodeCode => {
+                if all_content_is_optional(&getter.get_content()?)? {
+                    document.set_match_type(&node, MatchType::Optional)?;
+                }
+            },
+            _ => {
+                process_child_inline_elements(&node, document)?;
+                annotate_circumstantial_node(&node, document)?;
+            }
+        }
+
+        current_child = node.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.next_sibling()?;
+    }
+
+    Ok(())
+}
+
+fn all_content_is_optional(content: &String) -> HowserResult<bool> {
+    if content.is_empty() {
+        return Ok(true);
+    }
+
+    let (match_type, tail) = extract_match_type(content)?;
+    Ok(match_type == MatchType::Optional && all_content_is_optional(&tail)?)
+}
+
 /// Extract and transform the block-level Rx annotations from the document into metadata.
 fn process_child_block_elements(parent: &Node, document: &Document) -> HowserResult<()> {
     trace!("process_child_block_elements::");
@@ -221,15 +277,6 @@ fn process_child_block_elements(parent: &Node, document: &Document) -> HowserRes
         .as_ref()
         .ok_or(HowserError::CapabilityError)?
         .first_child()?;
-    if let Some(ref node) = current_child {
-        match ElementType::determine(node)? {
-            ElementType::InlineContainer | ElementType::InlineLeaf => {
-                debug!("process_child_block_elements:: Returning from inline element {:?}", node);
-                return Ok(());
-            }
-            _ => (),
-        }
-    }
 
     while let Some(l1_node) = current_child {
         let mut l2 = LookaheadType::Other(None);
@@ -249,7 +296,7 @@ fn process_child_block_elements(parent: &Node, document: &Document) -> HowserRes
                 LookaheadType::DiscreteLiteral(target),
                 LookaheadType::Ditto(ditto),
             ) => {
-                process_child_block_elements(&target, document)?;
+                process_child_elements(&target, document)?;
                 document.set_match_type(&ditto, MatchType::Repeatable)?;
                 current_child = ditto.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.next_sibling()?;
             },
@@ -257,7 +304,7 @@ fn process_child_block_elements(parent: &Node, document: &Document) -> HowserRes
                 LookaheadType::DiscreteLiteral(target),
                 _,
             ) => {
-                process_child_block_elements(&target, document)?;
+                process_child_elements(&target, document)?;
                 current_child = target.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.next_sibling()?;
             },
             (
@@ -290,7 +337,7 @@ fn process_child_block_elements(parent: &Node, document: &Document) -> HowserRes
                 LookaheadType::IntegratedLiteral(target),
                 LookaheadType::Ditto(ditto),
             ) => {
-                process_child_block_elements(&target, document)?;
+                process_child_elements(&target, document)?;
                 document.set_match_type(&ditto, MatchType::Repeatable)?;
                 current_child = ditto.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.next_sibling()?;
             },
@@ -298,7 +345,7 @@ fn process_child_block_elements(parent: &Node, document: &Document) -> HowserRes
                 LookaheadType::IntegratedLiteral(target),
                 _,
             ) => {
-                process_child_block_elements(&target, document)?;
+                process_child_elements(&target, document)?;
                 current_child = target.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.next_sibling()?;
             },
             (
@@ -324,7 +371,7 @@ fn process_child_block_elements(parent: &Node, document: &Document) -> HowserRes
                 LookaheadType::IntegratedOccupied(target, match_type),
                 LookaheadType::Ditto(ditto),
             ) => {
-                process_child_block_elements(&target, document)?;
+                process_child_elements(&target, document)?;
                 remove_annotation(&target)?;
                 document.set_match_type(&target, match_type)?;
                 document.set_match_type(&ditto, MatchType::Repeatable)?;
@@ -334,7 +381,7 @@ fn process_child_block_elements(parent: &Node, document: &Document) -> HowserRes
                 LookaheadType::IntegratedOccupied(target, match_type),
                 _,
             ) => {
-                process_child_block_elements(&target, document)?;
+                process_child_elements(&target, document)?;
                 remove_annotation(&target)?;
                 document.set_match_type(&target, match_type)?;
                 current_child = target.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.next_sibling()?;
@@ -343,8 +390,8 @@ fn process_child_block_elements(parent: &Node, document: &Document) -> HowserRes
                 LookaheadType::List(target),
                 _,
             ) => {
-                process_child_block_elements(&target, document)?;
-                annotate_list_element(&target, document)?;
+                process_child_elements(&target, document)?;
+                annotate_circumstantial_node(&target, document)?;
                 current_child = target.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.next_sibling()?;
             },
             (LookaheadType::Ditto(node), _) => {
@@ -731,16 +778,16 @@ fn remove_item_annotation(node: &Node) -> HowserResult<()> {
 /// If any children are marked Mandatory, then the list is also mandatory. Otherwise, it is optional.
 /// This is necessary because lists nodes are meta-nodes in cmark and will only appear as containers
 /// for list items if they are present.
-fn annotate_list_element(list: &Node, document: &Document) -> HowserResult<()> {
-    document.set_match_type(list, MatchType::Optional)?;
-    let traverser = list.capabilities
+fn annotate_circumstantial_node(target_node: &Node, document: &Document) -> HowserResult<()> {
+    document.set_match_type(target_node, MatchType::Optional)?;
+    let traverser = target_node.capabilities
         .traverse
         .as_ref()
         .ok_or(HowserError::CapabilityError)?;
     let mut child = traverser.first_child()?;
     while let Some(node) = child {
         if document.get_match_type(&node)? == MatchType::Mandatory {
-            document.set_match_type(&list, MatchType::Mandatory)?;
+            document.set_match_type(&target_node, MatchType::Mandatory)?;
             return Ok(());
         } else {
             let traverser = node.capabilities
