@@ -39,7 +39,7 @@ impl error::Error for HowserError {
             &HowserError::RuntimeError(ref message) => message,
             &HowserError::CapabilityError => "Capability Error",
             &HowserError::RegexError(ref error) => error.description(),
-            &HowserError::PrescriptionError(_) => "Prescription Error"
+            &HowserError::PrescriptionError(_) => "Prescription Error",
         }
     }
 
