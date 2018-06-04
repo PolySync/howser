@@ -31,12 +31,6 @@ struct OptionalMatchInput {
     bookmark: Option<Node>,
 }
 
-/// Return type for validating optional block level elements.
-struct OptionalMatchOutput {
-    rx: Option<Node>,
-    node: Option<Node>,
-}
-
 /// Type for managing the state of the validation process.
 struct MatchState {
     rx: Option<Node>,
@@ -476,7 +470,7 @@ impl<'a> Validator<'a> {
                             break;
                         }
                     }
-                    (MatchResult::Error(err), MatchType::Optional) => {
+                    (MatchResult::Error(_), MatchType::Optional) => {
                         break;
                     }
                     _ => {
@@ -638,7 +632,7 @@ impl<'a> Validator<'a> {
                         bookmark: bookmark,
                     }))
                 }
-                Some(err) => {
+                Some(_) => {
                     let next_rx = rx.capabilities
                         .traverse
                         .as_ref()
@@ -691,7 +685,7 @@ impl<'a> Validator<'a> {
                         bookmark: bookmark,
                     }))
                 }
-                Some(problem) => {
+                Some(_) => {
                     let next_rx = rx.capabilities
                         .traverse
                         .as_ref()

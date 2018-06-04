@@ -4,7 +4,6 @@ extern crate termion;
 
 use self::termion::color;
 use errors::ValidationProblem;
-use helpers::cli::ShellText;
 
 /// Options for configuring a CLI report.
 pub enum CLIOption {

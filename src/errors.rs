@@ -6,7 +6,7 @@ extern crate termion;
 use self::regex::Error as RegexError;
 use self::termion::color;
 use self::termion::style;
-use data::{ContentMatchPair, PromptToken};
+use data::ContentMatchPair;
 use document::{Document, Prescription};
 use doogie::constants::NodeType;
 use doogie::errors::DoogieError;
@@ -399,8 +399,8 @@ impl Reportable for TypeMismatchError {
             style::Reset
         );
 
-        let node_type = format!("{}{:?}{}", style::Bold, self.node_type, style::Reset);
-        let rx_type = format!("{}{:?}{}", style::Bold, self.rx_type, style::Reset);
+        let node_type = format!("{}{:?}{}\n", style::Bold, self.node_type, style::Reset);
+        let rx_type = format!("{}{:?}{}\n", style::Bold, self.rx_type, style::Reset);
 
         let mut message = format!(
             "{}Type Mismatch Error{}",
@@ -409,9 +409,11 @@ impl Reportable for TypeMismatchError {
         );
         message += "\n\n";
         message += &rx_info;
+        message += &rx_type;
         message += &cli::as_code_lines(&self.rx_snippet, self.rx_line).join("\n");
         message += "\n\n";
         message += &doc_info;
+        message += &node_type;
         message += &cli::as_code_lines(&self.doc_snippet, self.doc_line).join("\n");
         message
     }

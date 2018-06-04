@@ -10,7 +10,6 @@ use data::ElementType;
 use data::{MatchType, NodeData};
 use doogie::constants::*;
 use doogie::Node;
-use doogie::NodeGetter;
 use errors::{HowserError, HowserResult, SpecWarning};
 use std::cell::RefCell;
 use std::collections::HashMap;
