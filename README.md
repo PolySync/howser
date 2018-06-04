@@ -37,17 +37,19 @@ sensible README files and consistently formatted requirements documentation.
 
 Howser can be built using the normal cargo invocation.
 
-```
-$ cargo build
-```
+* From the project root, run the command
+    ```
+    $ cargo build
+    ```
 
 ### Installation
 
-Howser can be installed using the cargo command.
+Howser can be installed using cargo.
 
-```
-$ cargo install
-```
+* From the project root, run the command
+    ```
+    $ cargo install
+    ```
 
 ## Usage
 
