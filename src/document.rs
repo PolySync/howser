@@ -10,6 +10,7 @@ use data::ElementType;
 use data::{MatchType, NodeData};
 use doogie::constants::*;
 use doogie::Node;
+use doogie::NodeGetter;
 use errors::{HowserError, HowserResult, SpecWarning};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -225,6 +226,24 @@ impl<'a> Document<'a> {
         }
 
         Ok(self)
+    }
+
+    pub fn get_line_num(node: &Node) -> HowserResult<usize> {
+        let parent = node.capabilities
+            .traverse
+            .as_ref()
+            .ok_or(HowserError::CapabilityError)?
+            .parent()?;
+        let line_num = node.capabilities
+            .get
+            .as_ref()
+            .ok_or(HowserError::CapabilityError)?
+            .get_start_line()?;
+
+        match (parent, line_num) {
+            (Some(parent), 0) => Document::get_line_num(&parent),
+            _ => Ok(line_num as usize),
+        }
     }
 }
 

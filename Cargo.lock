@@ -104,6 +104,7 @@ dependencies = [
  "num 0.1.41 (registry+https://github.com/rust-lang/crates.io-index)",
  "proptest 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "regex 0.2.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "termion 1.5.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "unicode-segmentation 1.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 

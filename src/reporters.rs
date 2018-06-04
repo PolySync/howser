@@ -1,5 +1,8 @@
 //! Formatters for reporting validation results.
 
+extern crate termion;
+
+use self::termion::color;
 use errors::ValidationProblem;
 use helpers::cli::ShellText;
 
@@ -8,8 +11,6 @@ pub enum CLIOption {
     /// The message to be displayed for a valid document.
     SuccessMessage(String),
     /// the message to be displayed for an invalid document
-    FailureMessage(String),
-    /// The CLI is operating in verbose mode.
     VerboseMode(bool),
 }
 
@@ -18,15 +19,16 @@ pub fn make_cli_report(issues: &Option<ValidationProblem>, config: Vec<CLIOption
     let mut report: Vec<String> = Vec::new();
 
     let mut verbose_mode = false;
-    let mut success_message =
-        ShellText::OkColor(Box::new(ShellText::Literal("Rx Filled!".to_string()))).to_string();
-    let mut failure_message =
-        ShellText::ErrorColor(Box::new(ShellText::Literal("Rx Rejected!".to_string()))).to_string();
+    let mut success_message = format!(
+        "{}{}{}",
+        color::Fg(color::Green),
+        "Valid",
+        color::Fg(color::Reset)
+    );
 
     for option in config {
         match option {
             CLIOption::SuccessMessage(message) => success_message = message,
-            CLIOption::FailureMessage(message) => failure_message = message,
             CLIOption::VerboseMode(mode) => verbose_mode = mode,
         }
     }
@@ -38,10 +40,9 @@ pub fn make_cli_report(issues: &Option<ValidationProblem>, config: Vec<CLIOption
         });
     }
 
-    report.push(match issues {
-        None => success_message,
-        Some(_) => failure_message,
-    });
+    if issues.is_none() {
+        report.push(success_message);
+    }
 
     report.join("\n\n")
 }
