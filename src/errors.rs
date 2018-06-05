@@ -18,7 +18,6 @@ use helpers::cli::ShellText;
 use std::error;
 use std::fmt;
 use std::io::Error as IOError;
-use std::ops::Add;
 
 /// Crate-wide Result type.
 pub type HowserResult<T> = Result<T, HowserError>;
@@ -48,7 +47,7 @@ impl error::Error for HowserError {
             &HowserError::CapabilityError => "Capability Error",
             &HowserError::RegexError(ref error) => error.description(),
             &HowserError::PrescriptionError(_) => "Prescription Error",
-            &HowserError::TomlError(ref err) => "TomlError",
+            &HowserError::TomlError(_) => "TomlError",
         }
     }
 

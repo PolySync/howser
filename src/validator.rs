@@ -1439,7 +1439,7 @@ mod tests {
 
         let report = validator.validate().unwrap();
 
-        assert!(report.is_none());
+        assert!(report.is_empty());
     }
 
     #[test]
@@ -1455,7 +1455,7 @@ mod tests {
 
         let report = validator.validate().unwrap();
 
-        assert!(report.is_some());
+        assert!(!report.is_empty());
     }
 
     #[test]
@@ -1472,7 +1472,7 @@ mod tests {
 
         let report = validator.validate().unwrap();
 
-        assert!(report.is_none());
+        assert!(report.is_empty());
     }
 
     #[test]
@@ -1489,7 +1489,7 @@ mod tests {
 
         let report = validator.validate().unwrap();
 
-        assert!(report.is_some());
+        assert!(!report.is_empty());
     }
 
     #[test]
@@ -1505,7 +1505,7 @@ mod tests {
 
         let report = validator.validate().unwrap();
 
-        assert!(report.is_some());
+        assert!(!report.is_empty());
     }
 
     #[test]
@@ -1532,8 +1532,8 @@ mod tests {
         let report_1 = validator_1.validate().unwrap();
         let report_2 = validator_2.validate().unwrap();
 
-        assert!(report_1.is_none());
-        assert!(report_2.is_none());
+        assert!(report_1.is_empty());
+        assert!(report_2.is_empty());
     }
 
     #[test]
@@ -1549,7 +1549,7 @@ mod tests {
 
         let report = validator.validate().unwrap();
 
-        assert!(report.is_some());
+        assert!(!report.is_empty());
     }
 
     #[test]
@@ -1566,7 +1566,7 @@ mod tests {
 
         let report = validator.validate().unwrap();
 
-        assert!(report.is_none());
+        assert!(report.is_empty());
     }
 
     #[test]
@@ -1582,7 +1582,7 @@ mod tests {
 
         let report = validator.validate().unwrap();
 
-        assert!(report.is_some());
+        assert!(!report.is_empty());
     }
 
     #[test]
@@ -1608,8 +1608,8 @@ mod tests {
         let report_1 = validator_1.validate().unwrap();
         let report_2 = validator_2.validate().unwrap();
 
-        assert!(report_1.is_none());
-        assert!(report_2.is_none());
+        assert!(report_1.is_empty());
+        assert!(report_2.is_empty());
     }
 
     #[test]
@@ -1625,7 +1625,7 @@ mod tests {
 
         let report = validator.validate().unwrap();
 
-        assert!(report.is_some());
+        assert!(!report.is_empty());
     }
 
     #[test]
@@ -1641,7 +1641,7 @@ mod tests {
 
         let report = validator.validate().unwrap();
 
-        assert!(report.is_none());
+        assert!(report.is_empty());
     }
 
     #[test]
@@ -1663,8 +1663,8 @@ mod tests {
         let validator_1 = Validator::new(rx_1, doc);
         let validator_2 = Validator::new(rx_2, empty_doc);
 
-        assert!(validator_1.validate().unwrap().is_none());
-        assert!(validator_2.validate().unwrap().is_none());
+        assert!(validator_1.validate().unwrap().is_empty());
+        assert!(validator_2.validate().unwrap().is_empty());
     }
 
     #[test]
@@ -1681,7 +1681,7 @@ mod tests {
         let report = validator.validate().unwrap();
 
         assert!(
-            report.is_some(),
+            !report.is_empty(),
             "The mandatory wildcard paragraph did not fail against empty document."
         );
     }
@@ -1706,7 +1706,7 @@ mod tests {
 
         let report = validator.validate().unwrap();
 
-        assert!(report.is_none());
+        assert!(report.is_empty());
     }
 
     #[test]
@@ -1729,7 +1729,7 @@ mod tests {
 
         let report = validator.validate().unwrap();
 
-        assert!(report.is_none());
+        assert!(report.is_empty());
     }
 
     #[test]
@@ -1752,7 +1752,7 @@ mod tests {
 
         let report = validator.validate().unwrap();
 
-        assert!(report.is_some());
+        assert!(!report.is_empty());
     }
 
     #[test]
@@ -1776,7 +1776,7 @@ mod tests {
 
         let report = validator.validate().unwrap();
 
-        assert!(report.is_some());
+        assert!(!report.is_empty());
     }
 
     #[test]
@@ -1797,7 +1797,7 @@ mod tests {
 
         let report = validator.validate().unwrap();
 
-        assert!(report.is_none());
+        assert!(report.is_empty());
     }
 
     #[test]
@@ -1826,11 +1826,11 @@ mod tests {
         let second_validator = Validator::new(second_rx, second_doc);
 
         assert!(
-            first_validator.validate().unwrap().is_none(),
+            first_validator.validate().unwrap().is_empty(),
             "The optional prompted paragraph did not match the given string."
         );
         assert!(
-            second_validator.validate().unwrap().is_none(),
+            second_validator.validate().unwrap().is_empty(),
             "The optional prompted paragraph did not match an empty string"
         );
     }
@@ -1860,11 +1860,11 @@ mod tests {
         let second_validator = Validator::new(second_rx, second_doc);
 
         assert!(
-            first_validator.validate().unwrap().is_some(),
+            !first_validator.validate().unwrap().is_empty(),
             "The mandatory prompted paragraph did not fail against mismatched text."
         );
         assert!(
-            second_validator.validate().unwrap().is_some(),
+            !second_validator.validate().unwrap().is_empty(),
             "The mandatory prompted paragraph did not fail against empty document."
         );
     }
@@ -1895,11 +1895,11 @@ mod tests {
         let validator_2 = Validator::new(rx_2, doc_2);
 
         assert!(
-            validator_1.validate().unwrap().is_none(),
+            validator_1.validate().unwrap().is_empty(),
             "Absence of optional items caused mismatch"
         );
         assert!(
-            validator_2.validate().unwrap().is_none(),
+            validator_2.validate().unwrap().is_empty(),
             "Presence of optional items caused mismatch"
         );
     }
@@ -1924,7 +1924,7 @@ mod tests {
         ) {
             let (template, document) = serialize_match_seq(matches);
 
-            let match_pairs = Validator::match_contents(&document, &template).unwrap();
+            let match_pairs = Validator::check_content_match(&document, &template).unwrap();
 
             assert!(! ContentMatchPair::contains_mismatch(&match_pairs));
         }
@@ -1936,7 +1936,7 @@ mod tests {
                 state + item
             });
 
-            let match_pairs = Validator::match_contents(&template, content).unwrap();
+            let match_pairs = Validator::check_content_match(&template, content).unwrap();
 
             assert!(ContentMatchPair::contains_mismatch(&match_pairs));
         }

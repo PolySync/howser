@@ -276,7 +276,7 @@ mod tests {
     fn test_check_subcommand_requires_enough_args() {
         let app = super::make_app();
         if let Err(e) = app.get_matches_from_safe(vec!["howser", "check"]) {
-            assert_eq!(e.kind, ErrorKind::MissingRequiredArgument);
+            assert_eq!(e.kind, ErrorKind::MissingArgumentOrSubcommand);
         } else {
             panic!();
         }
