@@ -56,7 +56,8 @@ Howser can be installed using cargo.
 Howser is a command line tool with two major functions. Checking a prescription
 file for conformity to the Rx spec and Validating a markdown document against
 a prescription file. The checking function is applied implicitly as part of
-validation.
+validation. Validations can be batched by using the `--pharmacy` option in the
+validation subcommand.
 
 ```
 $ howser --help
@@ -65,32 +66,67 @@ Howser 0.1.0
 Document conformity validator for the Rx spec.
 
 USAGE:
-    howser [FLAGS] [SUBCOMMAND]
+    howser <SUBCOMMAND>
 
 FLAGS:
-    -h, --help       Prints help information
-    -V, --version    Prints version information
-    -v, --verbose    Use verbose (multiline) output for errors and warnings.
+    -h, --help       Prints help information.
+    -V, --version    Prints version information.
 
 SUBCOMMANDS:
-    check       Checks that a document intended for use as a prescription conforms to the Rx spec.
-    help        Prints this message or the help of the given subcommand(s)
-    validate    Validate a Markdown document against an Rx Prescription file.
+    check       Verifies that an .rx file conforms to the Rx spec.
+    validate    Validate a Markdown document against an .rx Prescription file.
 ```
+
+*
+    ```
+    $ howser check --help
+    
+    howser-check 
+    Verifies that an .rx file conforms to the Rx spec.
+    
+    USAGE:
+        howser check [FLAGS] <PRESCRIPTION>
+    
+    FLAGS:
+        -h, --help       Prints help information.
+        -v, --verbose    Use verbose (multiline) output for errors and warnings.
+    
+    ARGS:
+        <PRESCRIPTION>    Prescription file to check
+    ```
+    
+    ```
+    $ howser validate --help
+    
+    howser-validate 
+    Validate a Markdown document against an .rx Prescription file.
+    
+    USAGE:
+        howser validate [FLAGS] [OPTIONS] <PRESCRIPTION> <DOCUMENT>
+    
+    FLAGS:
+        -h, --help       Prints help information.
+        -v, --verbose    Use verbose (multiline) output for errors and warnings.
+    
+    OPTIONS:
+        -p, --pharmacy <PHARMACY>    Performs validation based on a pharmacy file
+    
+    ARGS:
+        <PRESCRIPTION>    
+        <DOCUMENT> 
+    ```
 
 ### Examples
 
 * Checking valid and invalid prescription files from the examples directory.
     ```
     $ howser check examples/template.rx
-    Valid Rx!
+    Valid
     ```
 
     ```
     $ howser check examples/bad_template.rx
     SpecWarning :: examples/bad_template.rx line 1 :: An element with a Ditto prompt must be preceded by an element of the same type.
-
-    Invalid Rx
     ```
 
 * Validating conforming and non-conforming markdown files against the
@@ -98,14 +134,29 @@ prescription file `wizard.rx` from the examples directory.
 
     ```
     $ howser validate examples/wizard.rx examples/wizard.md
-    Rx Filled!
+    Valid
     ```
 
     ```
     $ howser validate examples/wizard.rx examples/not_the_wizard.md
-    Document Error :: examples/wizard.rx line 1, examples/not_the_wizard.md line 1 :: Missing mandatory node.
+    Textual Content Error
+    
+    Prescription : We're off to see -!!-
+    Document     : <No Match>e
+    
+    examples/wizard.rx line 1
+    1  We're off to see -\!\!-
+    
+    examples/not_the_wizard.md line 1
+    1  We're off to see
+    ```
+    
+* Using a pharmacy file to run a batch of validation jobs.
 
-    Rx Rejected!
+    ```
+    $ howser validate --pharmacy Pharmacy.toml
+    
+    Valid
     ```
 
 ## Tests

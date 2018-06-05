@@ -93,14 +93,14 @@ fn make_app<'a, 'b>() -> App<'a, 'b> {
         )
         .subcommand(
             SubCommand::with_name("validate")
-                .about("Validate a Markdown document against an .rx Prescription file.")
+                .about("Validates a Markdown document against an .rx Prescription file.")
                 .help_message("Prints help information.")
                 .setting(AppSettings::ArgRequiredElseHelp)
                 .arg(
                     Arg::with_name("pharmacy")
                         .short("-p")
                         .long("pharmacy")
-                        .help("Performs validation based on a pharmacy file")
+                        .help("Performs validation based on a pharmacy .toml file")
                         .value_name("PHARMACY")
                         .takes_value(true),
                 )
