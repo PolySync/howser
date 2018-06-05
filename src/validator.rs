@@ -1519,6 +1519,22 @@ mod tests {
     }
 
     #[test]
+    fn test_optional_inline_prompts_are_optional() {
+        let rx_root = parse_document(&"* [foo-!!-](-!!-)-??-**Foo**".to_string());
+        let match_root = parse_document(&"* [foobar](Fux)**Foo**".to_string());
+        let rx = Document::new(&rx_root, None)
+            .unwrap()
+            .into_prescription()
+            .unwrap();
+        let doc = Document::new(&match_root, None).unwrap();
+        let validator = Validator::new(rx, doc);
+
+        let report = validator.validate().unwrap();
+
+        assert!(report.is_none());
+    }
+
+    #[test]
     fn test_literal_code_match() {
         let text = "`let my_num: u32 = 42;`".to_string();
         let rx_root = parse_document(&text);
