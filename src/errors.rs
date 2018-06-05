@@ -7,6 +7,7 @@ extern crate toml;
 use self::regex::Error as RegexError;
 use self::termion::color;
 use self::termion::style;
+use self::toml::de::Error as TomlError;
 use data::ContentMatchPair;
 use document::{Document, Prescription};
 use doogie::constants::NodeType;
@@ -18,7 +19,6 @@ use std::error;
 use std::fmt;
 use std::io::Error as IOError;
 use std::ops::Add;
-use self::toml::de::Error as TomlError;
 
 /// Crate-wide Result type.
 pub type HowserResult<T> = Result<T, HowserError>;
@@ -35,7 +35,7 @@ pub enum HowserError {
     CapabilityError,
     RegexError(RegexError),
     PrescriptionError(SpecWarning),
-    TomlError(TomlError)
+    TomlError(TomlError),
 }
 
 impl error::Error for HowserError {
@@ -48,7 +48,7 @@ impl error::Error for HowserError {
             &HowserError::CapabilityError => "Capability Error",
             &HowserError::RegexError(ref error) => error.description(),
             &HowserError::PrescriptionError(_) => "Prescription Error",
-            &HowserError::TomlError(ref err) => "TomlError"
+            &HowserError::TomlError(ref err) => "TomlError",
         }
     }
 

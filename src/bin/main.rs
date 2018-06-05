@@ -1,9 +1,12 @@
-#[macro_use] extern crate clap;
+#[macro_use]
+extern crate clap;
+#[macro_use]
+extern crate log;
 
-extern crate toml;
 extern crate doogie;
 extern crate env_logger;
 extern crate howser;
+extern crate toml;
 
 use clap::{App, AppSettings, Arg, ArgMatches, SubCommand};
 use doogie::parse_document;
@@ -15,6 +18,7 @@ use std::error::Error;
 use std::fs::File;
 use std::io::prelude::*;
 use std::str;
+use toml::Value;
 
 fn main() {
     env_logger::init();
@@ -29,8 +33,8 @@ fn main() {
         }
         ("validate", Some(sub_m)) => {
             let options = vec![CLIOption::VerboseMode(sub_m.is_present("verbose"))];
-            if let Some(filemane) = sub_m.value_of("pharmacy") {
-                (do_pharmacy_job(&sub_m), options)
+            if sub_m.is_present("pharmacy") {
+                (process_pharmacy_file(&sub_m), options)
             } else {
                 (validate(sub_m), options)
             }
@@ -43,7 +47,7 @@ fn main() {
 
     match issues {
         Ok(issues) => {
-            let cli_report = make_cli_report(&issues, options);
+            let cli_report = make_cli_report(&issues, &options);
             println!("{}", cli_report);
             std::process::exit(0);
         }
@@ -98,7 +102,8 @@ fn make_app<'a, 'b>() -> App<'a, 'b> {
                         .long("pharmacy")
                         .help("Performs validation based on a pharmacy file")
                         .value_name("PHARMACY")
-                        .takes_value(true))
+                        .takes_value(true),
+                )
                 .arg(
                     Arg::with_name("verbose")
                         .short("v")
@@ -120,7 +125,7 @@ fn make_app<'a, 'b>() -> App<'a, 'b> {
         )
 }
 
-fn validate(args: &ArgMatches) -> HowserResult<Option<ValidationProblem>> {
+fn validate(args: &ArgMatches) -> HowserResult<Vec<ValidationProblem>> {
     let rx_name = args.value_of("prescription");
     let document_name = args.value_of("document");
 
@@ -143,16 +148,16 @@ fn validate(args: &ArgMatches) -> HowserResult<Option<ValidationProblem>> {
     }
 }
 
-fn check(args: &ArgMatches) -> HowserResult<Option<ValidationProblem>> {
+fn check(args: &ArgMatches) -> HowserResult<Vec<ValidationProblem>> {
     if let Some(filename) = args.value_of("prescription") {
         let filename = String::from(filename);
         let rx_root = parse_document(&get_file_contents(&filename)?);
         let document = Document::new(&rx_root, Some(filename))?;
 
         match document.into_prescription() {
-            Err(HowserError::PrescriptionError(warning)) => Ok(Some(Box::new(warning))),
+            Err(HowserError::PrescriptionError(warning)) => Ok(vec![Box::new(warning)]),
             Err(error) => Err(error),
-            Ok(_) => Ok(None),
+            Ok(_) => Ok(Vec::new()),
         }
     } else {
         Err(HowserError::RuntimeError(
@@ -161,25 +166,38 @@ fn check(args: &ArgMatches) -> HowserResult<Option<ValidationProblem>> {
     }
 }
 
-fn process_pharmacy_file(args: &ArgMatches) -> HowserResult<ValidationReport> {
-    let mut report = ValidationReport::new(None, None);
+fn process_pharmacy_file(args: &ArgMatches) -> HowserResult<Vec<ValidationProblem>> {
+    let mut report: Vec<ValidationProblem> = Vec::new();
 
     if let Some(filename) = args.value_of("pharmacy") {
         if let Ok(pharmacy_contents) = get_file_contents(filename) {
             if let Some(specs) = pharmacy_contents.parse::<Value>()?["Specs"].as_table() {
                 for rx_file in specs.keys() {
-                    if let Some(doc_file) = specs.get(rx_file).map_or(None, |value| value.as_str()) {
-                        report = report + validate(rx_file, doc_file)?;
+                    if let Some(doc_file) = specs.get(rx_file).map_or(None, |value| value.as_str())
+                    {
+                        let args = vec!["howser", "validate", rx_file, doc_file];
+                        let app = make_app();
+                        let matches = app.get_matches_from(args);
+                        if let Some(sub_m) = matches.subcommand_matches("validate") {
+                            let mut problems = validate(sub_m)?;
+                            report.append(&mut problems);
+                        } else {
+                            error!("Failed to get subcommand matches for Pharmacy file.");
+                        }
                     }
                 }
             }
             Ok(report)
         } else {
-            Err(HowserError::RuntimeError(format!("Pharmacy file not found: {}", filename)))
+            Err(HowserError::RuntimeError(format!(
+                "Pharmacy file not found: {}",
+                filename
+            )))
         }
-
     } else {
-        Err(HowserError::RuntimeError("Pharmacy filename could not be parsed from the argument string.".to_string()))
+        Err(HowserError::RuntimeError(
+            "Pharmacy filename could not be parsed from the argument string.".to_string(),
+        ))
     }
 }
 

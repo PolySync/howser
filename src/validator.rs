@@ -69,9 +69,15 @@ impl<'a> Validator<'a> {
     /// Validates the document against the prescription and returns the results.
     ///
     /// `None` indicates that the document is valid.
-    pub fn validate(&self) -> HowserResult<Option<ValidationProblem>> {
+    pub fn validate(&self) -> HowserResult<Vec<ValidationProblem>> {
         trace!("validate()");
-        self.validate_sibling_blocks(&self.prescription.document.root, &self.document.root)
+        let mut problems = Vec::new();
+        if let Some(problem) =
+            self.validate_sibling_blocks(&self.prescription.document.root, &self.document.root)?
+        {
+            problems.push(problem);
+        }
+        Ok(problems)
     }
 
     /// Validates a set of sibling block elements
