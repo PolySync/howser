@@ -150,8 +150,8 @@ impl Reportable for SpecWarning {
 
 /// General `Document` validity error.
 pub struct DocumentError {
-    document_line: u32,
-    rx_line: u32,
+    document_line: usize,
+    rx_line: usize,
     document_snippet: String,
     rx_snippet: String,
     message: String,
@@ -167,30 +167,8 @@ impl DocumentError {
         rx: &Prescription,
         message: String,
     ) -> HowserResult<Self> {
-        let doc_node_getter = doc_node
-            .capabilities
-            .get
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?;
-        let doc_node_renderer = doc_node
-            .capabilities
-            .render
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?;
-
-        let rx_getter = rx_node
-            .capabilities
-            .get
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?;
-        let rx_renderer = rx_node
-            .capabilities
-            .render
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?;
-
-        let document_line = doc_node_getter.get_start_line()?;
-        let rx_line = rx_getter.get_start_line()?;
+        let document_line = Document::get_line_num(&doc_node)?;
+        let rx_line = Document::get_line_num(&rx_node)?;
         let document_file = document
             .filename
             .as_ref()
@@ -201,8 +179,18 @@ impl DocumentError {
             .as_ref()
             .unwrap_or(&String::new())
             .to_string();
-        let document_snippet = doc_node_renderer.render_commonmark();
-        let rx_snippet = rx_renderer.render_commonmark();
+        let document_snippet = doc_node
+            .capabilities
+            .render
+            .as_ref()
+            .ok_or(HowserError::CapabilityError)?
+            .render_commonmark();
+        let rx_snippet = rx_node
+            .capabilities
+            .render
+            .as_ref()
+            .ok_or(HowserError::CapabilityError)?
+            .render_commonmark();
 
         Ok(DocumentError {
             document_line,
@@ -218,49 +206,78 @@ impl DocumentError {
 
 impl Reportable for DocumentError {
     fn short_msg(&self) -> String {
-        let error_type =
-            ShellText::ErrorColor(Box::new(ShellText::Literal("Document Error".to_string())));
-        let rx_info = ShellText::Underlined(Box::new(ShellText::Literal(format!(
-            "{} line {}",
-            self.rx_file, self.rx_line
-        ))));
-        let document_info = ShellText::Underlined(Box::new(ShellText::Literal(format!(
-            "{} line {}",
-            self.document_file, self.document_line
-        ))));
+        let error_type = format!(
+            "{}Document Error{}",
+            color::Fg(color::Red),
+            color::Fg(color::Reset)
+        );
+        let rx_info = format!(
+            "{}{} line {}{}",
+            style::Underline,
+            self.rx_file,
+            self.rx_line,
+            style::Reset
+        );
+        let document_info = format!(
+            "{}{} line {}{}",
+            style::Underline,
+            self.document_file,
+            self.document_line,
+            style::Reset
+        );
         let message_text = match self.message.is_empty() {
             true => self.message.clone(),
             false => format!(" :: {}", self.message),
         };
-        let message = ShellText::MessageColor(Box::new(ShellText::Literal(message_text)));
-        format!(
-            "{} :: {}, {}{}",
-            error_type.to_string(),
-            rx_info.to_string(),
-            document_info.to_string(),
-            message.to_string()
-        )
+        let message = format!(
+            "{}{}{}",
+            color::Fg(color::Yellow),
+            message_text,
+            color::Fg(color::Reset)
+        );
+        format!("{}: {} {} {}", error_type, rx_info, document_info, message)
     }
 
     fn long_msg(&self) -> String {
-        let mut message_lines = vec![self.short_msg()];
-
-        let mut snippet_lines = vec![
-            ShellText::Underlined(Box::new(ShellText::Literal(self.rx_file.to_owned())))
-                .to_string(),
-        ];
+        let error_type = format!(
+            "{}Document Error{}",
+            color::Fg(color::Red),
+            color::Fg(color::Reset)
+        );
+        let rx_info = format!(
+            "{}{} line {}{}",
+            style::Underline,
+            self.rx_file,
+            self.rx_line,
+            style::Reset
+        );
+        let document_info = format!(
+            "{}{} line {}{}",
+            style::Underline,
+            self.document_file,
+            self.document_line,
+            style::Reset
+        );
+        let message_text = match self.message.is_empty() {
+            true => self.message.clone(),
+            false => format!(" :: {}", self.message),
+        };
+        let message = format!(
+            "{} {}{}{}",
+            error_type,
+            color::Fg(color::Yellow),
+            message_text,
+            color::Fg(color::Reset)
+        );
+        let mut message_lines = vec![message];
+        let mut snippet_lines = vec![rx_info];
         snippet_lines.append(&mut cli::as_code_lines(
             &self.rx_snippet,
             self.rx_line as usize,
         ));
         message_lines.append(&mut cli::indented_lines(&snippet_lines, 4));
-
         message_lines.push(String::new());
-
-        let mut snippet_lines = vec![
-            ShellText::Underlined(Box::new(ShellText::Literal(self.document_file.to_owned())))
-                .to_string(),
-        ];
+        let mut snippet_lines = vec![document_info];
         snippet_lines.append(&mut cli::as_code_lines(
             &self.document_snippet,
             self.document_line as usize,
