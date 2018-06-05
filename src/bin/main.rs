@@ -100,9 +100,15 @@ fn make_app<'a, 'b>() -> App<'a, 'b> {
                     Arg::with_name("pharmacy")
                         .short("-p")
                         .long("pharmacy")
-                        .help("Performs validation based on a pharmacy .toml file")
+                        .help("Performs validation based on a pharmacy .toml file.")
                         .value_name("PHARMACY")
                         .takes_value(true),
+                )
+                .arg(
+                    Arg::with_name("fail-early")
+                        .short("-e")
+                        .long("fail-early")
+                        .help("For use with the --pharmacy option. Causes Howser to exit after the first error.")
                 )
                 .arg(
                     Arg::with_name("verbose")
@@ -175,12 +181,16 @@ fn process_pharmacy_file(args: &ArgMatches) -> HowserResult<Vec<ValidationProble
                 for rx_file in specs.keys() {
                     if let Some(doc_file) = specs.get(rx_file).map_or(None, |value| value.as_str())
                     {
-                        let args = vec!["howser", "validate", rx_file, doc_file];
+                        let validate_args = vec!["howser", "validate", rx_file, doc_file];
                         let app = make_app();
-                        let matches = app.get_matches_from(args);
+                        let matches = app.get_matches_from(validate_args);
                         if let Some(sub_m) = matches.subcommand_matches("validate") {
                             let mut problems = validate(sub_m)?;
-                            report.append(&mut problems);
+                            if args.is_present("fail-early") && !problems.is_empty() {
+                                return Ok(problems);
+                            } else {
+                                report.append(&mut problems);
+                            }
                         } else {
                             error!("Failed to get subcommand matches for Pharmacy file.");
                         }
