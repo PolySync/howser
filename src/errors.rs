@@ -185,7 +185,8 @@ impl Reportable for DocumentError {
             Self::type_string(),
             self.info.rx_location(),
             self.info.node_location(),
-            self.message())
+            self.message()
+        )
     }
 
     fn long_msg(&self) -> String {
@@ -218,9 +219,13 @@ struct ErrorInfo {
 }
 
 impl ErrorInfo {
-    fn new(rx_node: &Node, doc_node: &Node, rx: &Prescription, doc: &Document,) -> HowserResult<Self> {
-        let node_file = doc
-            .filename
+    fn new(
+        rx_node: &Node,
+        doc_node: &Node,
+        rx: &Prescription,
+        doc: &Document,
+    ) -> HowserResult<Self> {
+        let node_file = doc.filename
             .as_ref()
             .unwrap_or(&"Unknown".to_string())
             .to_string();
@@ -295,7 +300,7 @@ impl ErrorInfo {
 
 /// Error resulting from disparate Node types
 pub struct TypeMismatchError {
-    info: ErrorInfo
+    info: ErrorInfo,
 }
 
 impl TypeMismatchError {
@@ -305,7 +310,6 @@ impl TypeMismatchError {
         rx: &Prescription,
         doc: &Document,
     ) -> HowserResult<Self> {
-
         Ok(TypeMismatchError {
             info: ErrorInfo::new(rx_node, doc_node, rx, doc)?,
         })
@@ -375,7 +379,7 @@ impl TextualContentError {
             .map(|pair| {
                 let content = match pair {
                     ContentMatchPair(_, Some(ref content)) => content.to_owned(),
-                    _ => String::from("<No Match>")
+                    _ => String::from("<No Match>"),
                 };
                 match ContentMatchPair::is_match(pair) {
                     true => ok_text(&content),
@@ -398,7 +402,12 @@ impl TextualContentError {
 
 impl Reportable for TextualContentError {
     fn short_msg(&self) -> String {
-        format!("{}: at {}, {}", Self::type_string(), self.info.rx_location(), self.info.node_location())
+        format!(
+            "{}: at {}, {}",
+            Self::type_string(),
+            self.info.rx_location(),
+            self.info.node_location()
+        )
     }
 
     fn long_msg(&self) -> String {
