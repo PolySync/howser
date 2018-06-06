@@ -96,19 +96,14 @@ pub trait Reportable {
 /// A warning related to `Prescription` specification compliance issues.
 #[derive(Debug)]
 pub struct SpecWarning {
-    line: u32,
+    line: usize,
     file: String,
     message: String,
 }
 
 impl SpecWarning {
     pub fn new(node: &Node, rx: &Document, message: &str) -> HowserResult<Self> {
-        let getter = node.capabilities
-            .get
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?;
-
-        let line = getter.get_start_line()?;
+        let line = Document::get_line_num(&node)?;
         let file = match rx.filename.as_ref() {
             Some(filename) => filename.clone(),
             None => String::new(),
@@ -124,14 +119,8 @@ impl SpecWarning {
 
 impl Reportable for SpecWarning {
     fn short_msg(&self) -> String {
-        let error_type = ShellText::WarningColor(Box::new(ShellText::Literal(
-            "SpecWarning".to_string(),
-        ))).to_string();
-        let file_info = format!(
-            "{} line {}",
-            ShellText::Underlined(Box::new(ShellText::Literal(self.file.clone()))).to_string(),
-            self.line
-        );
+        let error_type = error_type("Rx Specification Error");
+        let file_info = file_info(&self.file, self.line);
         let message = format!(
             " :: {}",
             ShellText::MessageColor(Box::new(ShellText::Literal(self.message.clone()))).to_string()
@@ -206,25 +195,9 @@ impl DocumentError {
 
 impl Reportable for DocumentError {
     fn short_msg(&self) -> String {
-        let error_type = format!(
-            "{}Document Error{}",
-            color::Fg(color::Red),
-            color::Fg(color::Reset)
-        );
-        let rx_info = format!(
-            "{}{} line {}{}",
-            style::Underline,
-            self.rx_file,
-            self.rx_line,
-            style::Reset
-        );
-        let document_info = format!(
-            "{}{} line {}{}",
-            style::Underline,
-            self.document_file,
-            self.document_line,
-            style::Reset
-        );
+        let error_type = error_type("Document Error");
+        let rx_info = file_info(&self.rx_file, self.rx_line);
+        let document_info = file_info(&self.document_file, self.document_line);
         let message_text = match self.message.is_empty() {
             true => self.message.clone(),
             false => format!(" :: {}", self.message),
@@ -239,25 +212,9 @@ impl Reportable for DocumentError {
     }
 
     fn long_msg(&self) -> String {
-        let error_type = format!(
-            "{}Document Error{}",
-            color::Fg(color::Red),
-            color::Fg(color::Reset)
-        );
-        let rx_info = format!(
-            "{}{} line {}{}",
-            style::Underline,
-            self.rx_file,
-            self.rx_line,
-            style::Reset
-        );
-        let document_info = format!(
-            "{}{} line {}{}",
-            style::Underline,
-            self.document_file,
-            self.document_line,
-            style::Reset
-        );
+        let error_type = error_type("Document Error");
+        let rx_info = file_info(&self.rx_file, self.rx_line);
+        let document_info = file_info(&self.document_file, self.document_line);
         let message_text = match self.message.is_empty() {
             true => self.message.clone(),
             false => format!(" :: {}", self.message),
@@ -372,27 +329,11 @@ impl TypeMismatchError {
 
 impl Reportable for TypeMismatchError {
     fn short_msg(&self) -> String {
-        let error_type = format!(
-            "{}Type Mismatch Error{}",
-            color::Fg(color::Red),
-            color::Fg(color::Reset)
-        );
-        let rx_info = format!(
-            "{}{} line {}{}",
-            style::Underline,
-            self.rx_file,
-            self.rx_line,
-            style::Reset
-        );
-        let doc_info = format!(
-            "{}{} line {}{}",
-            style::Underline,
-            self.doc_file,
-            self.doc_line,
-            style::Reset
-        );
-        let node_type = format!("{}{:?}{}", style::Bold, self.node_type, style::Reset);
-        let rx_type = format!("{}{:?}{}", style::Bold, self.rx_type, style::Reset);
+        let error_type = error_type("Type Mismatch Error");
+        let rx_info = file_info(&self.rx_file, self.rx_line);
+        let doc_info = file_info(&self.doc_file, self.doc_line);
+        let node_type = node_type_string(&self.node_type);
+        let rx_type = node_type_string(&self.rx_type);
 
         format!(
             "{}: {} from {} does not match {} from {}",
@@ -401,30 +342,13 @@ impl Reportable for TypeMismatchError {
     }
 
     fn long_msg(&self) -> String {
-        let rx_info = format!(
-            "{}{} line {}{}\n",
-            style::Underline,
-            self.rx_file,
-            self.rx_line,
-            style::Reset
-        );
-        let doc_info = format!(
-            "{}{} line {}{}\n",
-            style::Underline,
-            self.doc_file,
-            self.doc_line,
-            style::Reset
-        );
+        let error_type = error_type("Type Mismatch Error");
+        let rx_info = file_info(&self.rx_file, self.rx_line);
+        let doc_info = file_info(&self.doc_file, self.doc_line);
+        let node_type = node_type_string(&self.node_type);
+        let rx_type = node_type_string(&self.rx_type);
 
-        let node_type = format!("{}{:?}{}\n", style::Bold, self.node_type, style::Reset);
-        let rx_type = format!("{}{:?}{}\n", style::Bold, self.rx_type, style::Reset);
-
-        let mut message = format!(
-            "{}Type Mismatch Error{}",
-            color::Fg(color::Red),
-            color::Fg(color::Reset)
-        );
-        message += "\n\n";
+        let mut message = format!("{}\n\n", error_type);
         message += &rx_info;
         message += &rx_type;
         message += &cli::as_code_lines(&self.rx_snippet, self.rx_line).join("\n");
@@ -496,24 +420,13 @@ impl TextualContentError {
             .unwrap_or(&"Unknown".to_string())
             .to_string();
         let doc_line = Document::get_line_num(doc_node)?;
-
         let rx_prompts: Vec<String> = match_pairs
             .iter()
             .map(|pair| {
                 let content = pair.0.to_string();
                 match ContentMatchPair::is_match(pair) {
-                    true => format!(
-                        "{}{}{}",
-                        color::Fg(color::Green),
-                        content,
-                        color::Fg(color::Reset)
-                    ),
-                    false => format!(
-                        "{}{}{}",
-                        color::Fg(color::Red),
-                        content,
-                        color::Fg(color::Reset)
-                    ),
+                    true => ok_text(&content),
+                    false => error_text(&content),
                 }
             })
             .collect();
@@ -525,18 +438,8 @@ impl TextualContentError {
                     .unwrap_or(&String::from("<No Match>"))
                     .to_owned();
                 match ContentMatchPair::is_match(pair) {
-                    true => format!(
-                        "{}{}{}",
-                        color::Fg(color::Green),
-                        content,
-                        color::Fg(color::Reset)
-                    ),
-                    false => format!(
-                        "{}{}{}",
-                        color::Fg(color::Red),
-                        content,
-                        color::Fg(color::Reset)
-                    ),
+                    true => ok_text(&content),
+                    false => error_text(&content),
                 }
             })
             .collect();
@@ -569,58 +472,27 @@ impl TextualContentError {
 
 impl Reportable for TextualContentError {
     fn short_msg(&self) -> String {
-        let error_type = format!(
-            "{}Textual Content Error{}",
-            color::Fg(color::Red),
-            color::Fg(color::Reset)
-        );
-        let rx_info = format!(
-            "{}{} line {}{}",
-            style::Underline,
-            self.rx_file,
-            self.rx_line,
-            style::Reset
-        );
-        let doc_info = format!(
-            "{}{} line {}{}",
-            style::Underline,
-            self.doc_file,
-            self.doc_line,
-            style::Reset
-        );
-        let node_type = format!("{}{:?}{}", style::Bold, self.node_type, style::Reset);
+        let error_type = error_type("Textual Content Error");
+        let rx_info = file_info(&self.rx_file, self.rx_line);
+        let doc_info = file_info(&self.doc_file, self.doc_line);
+        let node_type = node_type_string(&self.node_type);
 
         format!("{}: {} at {}, {}", error_type, node_type, rx_info, doc_info)
     }
 
     fn long_msg(&self) -> String {
-        let mut message = format!(
-            "{}Textual Content Error{}\n\n",
-            color::Fg(color::Red),
-            color::Fg(color::Reset)
-        );
-        let rx_info = format!(
-            "{}{} line {}{}\n",
-            style::Underline,
-            self.rx_file,
-            self.rx_line,
-            style::Reset
-        );
-        let doc_info = format!(
-            "{}{} line {}{}\n",
-            style::Underline,
-            self.doc_file,
-            self.doc_line,
-            style::Reset
-        );
+        let error_type = error_type("Textual Content Error");
+        let rx_info = file_info(&self.rx_file, self.rx_line);
+        let doc_info = file_info(&self.doc_file, self.doc_line);
 
+        let mut message = format!("{}\n\n", error_type);
         message += &format!("{}Prescription : {}", style::Bold, style::Reset);
         message += &self.rx_prompts
             .iter()
             .flat_map(|s| s.chars())
             .collect::<String>();
         message += "\n";
-        message += &format!("{}Document     : {}", style::Bold, style::Reset);
+        message += &format!("{}Document : {}", style::Bold, style::Reset);
         message += &self.doc_matches
             .iter()
             .flat_map(|s| s.chars())
@@ -637,4 +509,45 @@ impl Reportable for TextualContentError {
     fn code(&self) -> u32 {
         1
     }
+}
+
+fn error_type(error_type: &str) -> String {
+    format!(
+        "{}{}{}",
+        color::Fg(color::Red),
+        error_type,
+        color::Fg(color::Reset),
+    )
+}
+
+fn file_info(filename: &str, line: usize) -> String {
+    format!(
+        "{}{} line {}{}",
+        style::Underline,
+        filename,
+        line,
+        style::Reset
+    )
+}
+
+fn node_type_string(node_type: &NodeType) -> String {
+    format!("{}{:?}{}\n", style::Bold, node_type, style::Reset)
+}
+
+fn ok_text(text: &str) -> String {
+    format!(
+        "{}{}{}",
+        color::Fg(color::Green),
+        text,
+        color::Fg(color::Reset)
+    )
+}
+
+fn error_text(text: &str) -> String {
+    format!(
+        "{}{}{}",
+        color::Fg(color::Red),
+        text,
+        color::Fg(color::Reset)
+    )
 }
