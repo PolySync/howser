@@ -1918,7 +1918,7 @@ mod tests {
         ) {
             let (template, document) = serialize_match_seq(matches);
 
-            let match_pairs = Validator::match_contents(&document, &template).unwrap();
+            let match_pairs = Validator::check_content_match(&document, &template).unwrap();
 
             assert!(! ContentMatchPair::contains_mismatch(&match_pairs));
         }
@@ -1930,7 +1930,7 @@ mod tests {
                 state + item
             });
 
-            let match_pairs = Validator::match_contents(&template, content).unwrap();
+            let match_pairs = Validator::check_content_match(&template, content).unwrap();
 
             assert!(ContentMatchPair::contains_mismatch(&match_pairs));
         }
