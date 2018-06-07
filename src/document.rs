@@ -226,6 +226,29 @@ impl<'a> Document<'a> {
 
         Ok(self)
     }
+
+    /// Infers the line number of the given node.
+    ///
+    /// Cmark reports that some inline and nested nodes are at line number zero which is usually
+    /// incorrect. This function searches up through the tree ancestry until it finds a parent node
+    /// that reports a sensible line number and returns that.
+    pub fn get_line_num(node: &Node) -> HowserResult<usize> {
+        let parent = node.capabilities
+            .traverse
+            .as_ref()
+            .ok_or(HowserError::CapabilityError)?
+            .parent()?;
+        let line_num = node.capabilities
+            .get
+            .as_ref()
+            .ok_or(HowserError::CapabilityError)?
+            .get_start_line()?;
+
+        match (parent, line_num) {
+            (Some(parent), 0) => Document::get_line_num(&parent),
+            _ => Ok(line_num as usize),
+        }
+    }
 }
 
 /// A `Document` that has been parsed into an Rx prescription.

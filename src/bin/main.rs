@@ -5,45 +5,37 @@ extern crate doogie;
 extern crate env_logger;
 extern crate howser;
 
-use clap::{App, Arg, ArgMatches, SubCommand};
+use clap::{App, AppSettings, Arg, ArgMatches, SubCommand};
 use doogie::parse_document;
 use howser::document::Document;
 use howser::errors::{HowserError, HowserResult, ValidationProblem};
-use howser::helpers::cli::ShellText;
 use howser::reporters::{make_cli_report, CLIOption};
 use howser::validator::Validator;
 use std::error::Error;
 use std::fs::File;
 use std::io::prelude::*;
+use std::str;
 
 fn main() {
     env_logger::init();
 
-    let matches = make_app().get_matches();
-    let (issues, mut options) = match matches.subcommand() {
+    let app = make_app();
+    let matches = app.get_matches();
+    let (issues, options) = match matches.subcommand() {
         ("check", Some(sub_m)) => {
-            let success_msg = ShellText::OkColor(Box::new(ShellText::Literal(
-                "Valid Rx".to_string(),
-            ))).to_string();
-            let failure_msg = ShellText::ErrorColor(Box::new(ShellText::Literal(
-                "Invalid Rx".to_string(),
-            ))).to_string();
-            (
-                check(sub_m),
-                vec![
-                    CLIOption::SuccessMessage(success_msg),
-                    CLIOption::FailureMessage(failure_msg),
-                ],
-            )
+            let options = vec![CLIOption::VerboseMode(sub_m.is_present("verbose"))];
+            (check(sub_m), options)
         }
-        ("validate", Some(sub_m)) => (validate(sub_m), Vec::new()),
+        ("validate", Some(sub_m)) => {
+            let options = vec![CLIOption::VerboseMode(sub_m.is_present("verbose"))];
+            (validate(sub_m), options)
+        }
         _ => (
-            Err(HowserError::Usage(String::from(matches.usage()))),
+            Err(HowserError::Usage(matches.usage().to_string())),
             Vec::new(),
         ),
     };
 
-    options.push(CLIOption::VerboseMode(matches.is_present("verbose")));
     match issues {
         Ok(issues) => {
             let cli_report = make_cli_report(&issues, options);
@@ -61,15 +53,22 @@ fn make_app<'a, 'b>() -> App<'a, 'b> {
     App::new("Howser")
         .about("Document conformity validator for the Rx spec.")
         .version(crate_version!())
-        .arg(
-            Arg::with_name("verbose")
-                .short("v")
-                .long("verbose")
-                .help("Use verbose (multiline) output for errors and warnings."),
-        )
+        .version_message("Prints version information.")
+        .help_message("Prints help information.")
+        .setting(AppSettings::SubcommandRequiredElseHelp)
+        .setting(AppSettings::VersionlessSubcommands)
+        .setting(AppSettings::DisableHelpSubcommand)
         .subcommand(
             SubCommand::with_name("check")
-                .about("Checks that a document intended for use as a prescription conforms to the Rx spec.")
+                .about("Verifies that an .rx file conforms to the Rx spec.")
+                .help_message("Prints help information.")
+                .setting(AppSettings::ArgRequiredElseHelp)
+                .arg(
+                    Arg::with_name("verbose")
+                        .short("v")
+                        .long("verbose")
+                        .help("Use verbose (multiline) output for errors and warnings."),
+                )
                 .arg(
                     Arg::with_name("prescription")
                         .required(true)
@@ -80,7 +79,15 @@ fn make_app<'a, 'b>() -> App<'a, 'b> {
         )
         .subcommand(
             SubCommand::with_name("validate")
-                .about("Validate a Markdown document against an Rx Prescription file.")
+                .about("Validate a Markdown document against an .rx Prescription file.")
+                .help_message("Prints help information.")
+                .setting(AppSettings::ArgRequiredElseHelp)
+                .arg(
+                    Arg::with_name("verbose")
+                        .short("v")
+                        .long("verbose")
+                        .help("Use verbose (multiline) output for errors and warnings."),
+                )
                 .arg(
                     Arg::with_name("prescription")
                         .required(true)
@@ -124,6 +131,7 @@ fn check(args: &ArgMatches) -> HowserResult<Option<ValidationProblem>> {
         let filename = String::from(filename);
         let rx_root = parse_document(&get_file_contents(&filename)?);
         let document = Document::new(&rx_root, Some(filename))?;
+
         match document.into_prescription() {
             Err(HowserError::PrescriptionError(warning)) => Ok(Some(Box::new(warning))),
             Err(error) => Err(error),
@@ -211,7 +219,7 @@ mod tests {
     fn test_check_subcommand_requires_enough_args() {
         let app = super::make_app();
         if let Err(e) = app.get_matches_from_safe(vec!["howser", "check"]) {
-            assert_eq!(e.kind, ErrorKind::MissingRequiredArgument);
+            assert_eq!(e.kind, ErrorKind::MissingArgumentOrSubcommand);
         } else {
             panic!();
         }
