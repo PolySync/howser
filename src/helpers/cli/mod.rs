@@ -53,10 +53,8 @@ pub fn as_code_lines(code: &str, start_line: usize) -> Vec<String> {
         })
         .enumerate()
         .map(|(i, line)| {
-            let mut line_num = format!("{}{}    ", style::Faint, i + start_line);
-            line_num.truncate(6);
-            line_num += &style::Reset.to_string();
-            format!("{} {}", line_num, line)
+            let line_num = format!("{}{:<4}{}", style::Faint, i + start_line, style::Reset);
+            format!("{}{}", line_num, line)
         })
         .collect()
 }

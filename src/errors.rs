@@ -334,12 +334,16 @@ impl Reportable for TypeMismatchError {
 
     fn long_msg(&self) -> String {
         let mut message = format!("{}\n\n", Self::type_string());
-        message += &self.info.rx_location();
         message += &self.info.rx_type();
+        message += "\n";
+        message += &self.info.rx_location();
+        message += "\n";
         message += &self.info.rx_snippet();
         message += "\n\n";
-        message += &self.info.node_location();
         message += &self.info.node_type();
+        message += "\n";
+        message += &self.info.node_location();
+        message += "\n";
         message += &self.info.node_snippet();
         message
     }
@@ -453,7 +457,7 @@ fn file_info(filename: &str, line: usize) -> String {
 }
 
 fn node_type_string(node_type: &NodeType) -> String {
-    format!("{}{:?}{}\n", style::Bold, node_type, style::Reset)
+    format!("{}{:?}{}", style::Bold, node_type, style::Reset)
 }
 
 fn ok_text(text: &str) -> String {
