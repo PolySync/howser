@@ -1,8 +1,5 @@
 #[macro_use]
 extern crate clap;
-#[macro_use]
-extern crate log;
-
 extern crate doogie;
 extern crate env_logger;
 extern crate howser;
@@ -18,6 +15,7 @@ use std::error::Error;
 use std::fs::File;
 use std::io::prelude::*;
 use std::str;
+use std::collections::BTreeMap;
 use toml::Value;
 
 fn main() {
@@ -26,41 +24,66 @@ fn main() {
     let app = make_app();
     let matches = app.get_matches();
 
-    let (issues, options) = match matches.subcommand() {
+    if let Err(e) = run(&matches) {
+        println!("{}", e.description());
+        let mut inner_err = e.cause();
+        while let Some(error) = inner_err {
+            println!("{}", error.description());
+            inner_err = error.cause();
+        }
+        std::process::exit(1);
+    } else {
+        std::process::exit(0);
+    }
+}
+
+fn run(args: &ArgMatches) -> HowserResult<()> {
+    let (issues, options) = match args.subcommand() {
         ("check", Some(sub_m)) => {
             let options = vec![CLIOption::VerboseMode(sub_m.is_present("verbose"))];
-            (check(sub_m), options)
+            let filename = args
+                .value_of("prescription")
+                .ok_or(HowserError::RuntimeError(
+                    "Error parsing prescription filename.".to_string()))?;
+
+            (check(filename)?, options)
         }
         ("validate", Some(sub_m)) => {
             let options = vec![CLIOption::VerboseMode(sub_m.is_present("verbose"))];
             if sub_m.is_present("pharmacy") {
-                (process_pharmacy_file(&sub_m), options)
-            } else {
-                (validate(sub_m), options)
-            }
-        }
-        _ => (
-            Err(HowserError::Usage(matches.usage().to_string())),
-            Vec::new(),
-        ),
-    };
+                let fail_early = sub_m.is_present("fail-early");
+                let filename = args
+                    .value_of("pharmacy").
+                    ok_or(HowserError::RuntimeError(
+                        "Pharmacy filename could not be parsed from the argument string.".to_string()))?;
+                let pharmacy_contents = get_file_contents(filename)?;
+                let specs = &pharmacy_contents.parse::<Value>()?["Specs"];
+                let prescription_pairs = specs
+                    .as_table()
+                    .ok_or(HowserError::RuntimeError(
+                        format!("Error parsing pharmacy file {}.", filename)))?;
 
-    match issues {
-        Ok(issues) => {
-            let cli_report = make_cli_report(&issues, &options);
-            println!("{}", cli_report);
-            std::process::exit(0);
-        }
-        Err(e) => {
-            println!("{}", e.description());
-            let mut inner_err = e.cause();
-            while let Some(error) = inner_err {
-                println!("{}", error.description());
-                inner_err = error.cause();
+                (process_pharmacy_file(prescription_pairs, fail_early)?, options)
+            } else {
+                let rx_name = sub_m
+                    .value_of("prescription")
+                    .ok_or(HowserError::RuntimeError(
+                        "Unable to parse the name of the prescription file.".to_string()))?;
+                let document_name = sub_m
+                    .value_of("document")
+                    .ok_or(HowserError::RuntimeError(
+                        "Unable to parse the name of the document file.".to_string()))?;
+
+                (validate(rx_name, document_name)?, options)
             }
-            std::process::exit(1);
         }
+        _ => return Err(HowserError::Usage(args.usage().to_string()))
     };
+    let cli_report = make_cli_report(&issues, &options);
+
+    println!("{}", cli_report);
+
+    Ok(())
 }
 
 fn make_app<'a, 'b>() -> App<'a, 'b> {
@@ -131,78 +154,40 @@ fn make_app<'a, 'b>() -> App<'a, 'b> {
         )
 }
 
-fn validate(args: &ArgMatches) -> HowserResult<Vec<ValidationProblem>> {
-    let rx_name = args.value_of("prescription");
-    let document_name = args.value_of("document");
+fn validate(rx_name: &str, document_name: &str) -> HowserResult<Vec<ValidationProblem>> {
+    let rx_root = parse_document(&get_file_contents(rx_name)?);
+    let doc_root = parse_document(&get_file_contents(document_name)?);
+    let rx = Document::new(&rx_root, Some(rx_name.to_string()))?.into_prescription()?;
+    let document = Document::new(&doc_root, Some(document_name.to_string()))?;
 
-    if let Some(rx_name) = rx_name {
-        if let Some(document_name) = document_name {
-            let rx_root = parse_document(&get_file_contents(rx_name)?);
-            let doc_root = parse_document(&get_file_contents(document_name)?);
-            let rx = Document::new(&rx_root, Some(rx_name.to_string()))?.into_prescription()?;
-            let document = Document::new(&doc_root, Some(document_name.to_string()))?;
-            Validator::new(rx, document).validate()
-        } else {
-            Err(HowserError::RuntimeError(
-                "Document filename could not be parsed from the argument string.".to_string(),
-            ))
-        }
-    } else {
-        Err(HowserError::RuntimeError(
-            "Prescription filename could not be parsed from the argument string.".to_string(),
-        ))
+    Validator::new(rx, document).validate()
+}
+
+fn check(filename: &str) -> HowserResult<Vec<ValidationProblem>> {
+    let rx_root = parse_document(&get_file_contents(filename)?);
+    let document = Document::new(&rx_root, Some(filename.to_string()))?;
+
+    match document.into_prescription() {
+        Err(HowserError::PrescriptionError(warning)) => Ok(vec![Box::new(warning)]),
+        Err(error) => Err(error),
+        Ok(_) => Ok(Vec::new()),
     }
 }
 
-fn check(args: &ArgMatches) -> HowserResult<Vec<ValidationProblem>> {
-    if let Some(filename) = args.value_of("prescription") {
-        let filename = String::from(filename);
-        let rx_root = parse_document(&get_file_contents(&filename)?);
-        let document = Document::new(&rx_root, Some(filename))?;
-
-        match document.into_prescription() {
-            Err(HowserError::PrescriptionError(warning)) => Ok(vec![Box::new(warning)]),
-            Err(error) => Err(error),
-            Ok(_) => Ok(Vec::new()),
-        }
-    } else {
-        Err(HowserError::RuntimeError(
-            "Prescription filename could not be parsed from the argument string.".to_string(),
-        ))
-    }
-}
-
-fn process_pharmacy_file(args: &ArgMatches) -> HowserResult<Vec<ValidationProblem>> {
+fn process_pharmacy_file(spec_pairs: &BTreeMap<String, Value>, fail_early: bool) -> HowserResult<Vec<ValidationProblem>> {
     let mut report: Vec<ValidationProblem> = Vec::new();
 
-    let filename = args
-        .value_of("pharmacy").
-        ok_or(HowserError::RuntimeError(
-            "Pharmacy filename could not be parsed from the argument string.".to_string()))?;
-    let pharmacy_contents = get_file_contents(filename)?;
-    let specs = &pharmacy_contents.parse::<Value>()?["Specs"];
-    let prescription_pairs = specs
-        .as_table()
-        .ok_or(HowserError::RuntimeError(format!("Error parsing pharmacy file {}.", filename)))?;
-
-    for (rx_file, doc_file) in prescription_pairs {
-        let document =
-            doc_file
+    for (rx_file, doc_value) in spec_pairs {
+        let doc_file = doc_value
                 .as_str()
                 .ok_or(HowserError::RuntimeError(
                     "The document corresponding to {} could not be parsed as a string.".to_string()))?;
 
-        let validation_args = vec!["howser", "validate", rx_file, document];
-        let matches = make_app().get_matches_from(validation_args);
-        if let Some(sub_m) = matches.subcommand_matches("validate") {
-            let mut problems = validate(sub_m)?;
-            if args.is_present("fail-early") && !problems.is_empty() {
-                return Ok(problems);
-            } else {
-                report.append(&mut problems);
-            }
+        let mut problems = validate(rx_file, doc_file)?;
+        if fail_early && !problems.is_empty() {
+            return Ok(problems);
         } else {
-            error!("Failed to get subcommand matches for Pharmacy file.");
+            report.append(&mut problems);
         }
     }
 
