@@ -175,40 +175,38 @@ fn check(args: &ArgMatches) -> HowserResult<Vec<ValidationProblem>> {
 fn process_pharmacy_file(args: &ArgMatches) -> HowserResult<Vec<ValidationProblem>> {
     let mut report: Vec<ValidationProblem> = Vec::new();
 
-    if let Some(filename) = args.value_of("pharmacy") {
-        if let Ok(pharmacy_contents) = get_file_contents(filename) {
-            if let Some(specs) = pharmacy_contents.parse::<Value>()?["Specs"].as_table() {
-                for rx_file in specs.keys() {
-                    if let Some(doc_file) = specs.get(rx_file).map_or(None, |value| value.as_str())
-                    {
-                        let validate_args = vec!["howser", "validate", rx_file, doc_file];
-                        let app = make_app();
-                        let matches = app.get_matches_from(validate_args);
-                        if let Some(sub_m) = matches.subcommand_matches("validate") {
-                            let mut problems = validate(sub_m)?;
-                            if args.is_present("fail-early") && !problems.is_empty() {
-                                return Ok(problems);
-                            } else {
-                                report.append(&mut problems);
-                            }
-                        } else {
-                            error!("Failed to get subcommand matches for Pharmacy file.");
-                        }
-                    }
-                }
+    let filename = args
+        .value_of("pharmacy").
+        ok_or(HowserError::RuntimeError(
+            "Pharmacy filename could not be parsed from the argument string.".to_string()))?;
+    let pharmacy_contents = get_file_contents(filename)?;
+    let specs = &pharmacy_contents.parse::<Value>()?["Specs"];
+    let prescription_pairs = specs
+        .as_table()
+        .ok_or(HowserError::RuntimeError(format!("Error parsing pharmacy file {}.", filename)))?;
+
+    for (rx_file, doc_file) in prescription_pairs {
+        let document =
+            doc_file
+                .as_str()
+                .ok_or(HowserError::RuntimeError(
+                    "The document corresponding to {} could not be parsed as a string.".to_string()))?;
+
+        let validation_args = vec!["howser", "validate", rx_file, document];
+        let matches = make_app().get_matches_from(validation_args);
+        if let Some(sub_m) = matches.subcommand_matches("validate") {
+            let mut problems = validate(sub_m)?;
+            if args.is_present("fail-early") && !problems.is_empty() {
+                return Ok(problems);
+            } else {
+                report.append(&mut problems);
             }
-            Ok(report)
         } else {
-            Err(HowserError::RuntimeError(format!(
-                "Pharmacy file not found: {}",
-                filename
-            )))
+            error!("Failed to get subcommand matches for Pharmacy file.");
         }
-    } else {
-        Err(HowserError::RuntimeError(
-            "Pharmacy filename could not be parsed from the argument string.".to_string(),
-        ))
     }
+
+    Ok(report)
 }
 
 #[cfg(test)]
