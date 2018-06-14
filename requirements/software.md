@@ -18,11 +18,11 @@
     of key value pairs that correspond to prescription files and the
     documents that are to be checked with them.
     
-    **Rx spec** = A DSL for constraining the content of Markdown 	documents
+    **Rx spec** = A DSL for constraining the content of Markdown documents
 
     **prescription file (.rx)** =  A document written using the Rx spec DSL
 
-    **Pharmacy file (.toml)** = A list of documents to validate paired with the 	prescription they’re validated against
+    **Pharmacy file (.toml)** = A list of documents to validate paired with the prescription they’re validated against
 
     ### Acceptance Requirements
 
@@ -30,11 +30,11 @@
     
     * **Given** that there exists some valid prescription files arbitrarily located within the project
         * **And** the prescription files are divided into groups "matching" and "mis-matching"
-        * **And** for each of the prescription files in the "match" group there exists a corresponding markdown file somewhere in the project that matches the prescription
+        * **And** for each of the prescription files in the "matching" group there exists a corresponding markdown file somewhere in the project that matches the prescription
         * **And** for each of the prescription files in the "mis-matching" group there exists a corresponding markdown file somewhere in the project that does not match the prescription
         * **And** there exists a "pharmacy.toml" file 
         * **And** the pharmacy file contains a toml section labeled "Specs"
-        * **And** for each prescription file there exists a toml key-value pair in the "Specs" section of the pharmacy file with filename as key and markdown filename as value
+        * **And** for each prescription file there exists a toml key-value pair in the "Specs" section of the pharmacy file with Rx spec filename as key and markdown filename as value
 
     #### Scenarios
 

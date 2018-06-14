@@ -11,7 +11,7 @@
 ///     * **And** for each of the prescription files in the "mis-matching" group there exists a corresponding markdown file somewhere in the project that does not match the prescription
 ///     * **And** there exists a "pharmacy.toml" file
 ///     * **And** the pharmacy file contains a toml section labeled "Specs"
-///     * **And** for each prescription file there exists a toml key-value pair in the "Specs" section of the pharmacy file with filename as key and markdown filename as value
+///     * **And** for each prescription file there exists a toml key-value pair in the "Specs" section of the pharmacy file with Rx spec filename as key and markdown filename as value
 extern crate toml;
 extern crate howser;
 extern crate assert_cli;
