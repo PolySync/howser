@@ -50,31 +50,44 @@ fn run(args: &ArgMatches) -> HowserResult<()> {
         }
         ("validate", Some(sub_m)) => {
             let options = vec![CLIOption::VerboseMode(sub_m.is_present("verbose"))];
-            if sub_m.is_present("pharmacy") {
-                let fail_early = sub_m.is_present("fail-early");
-                let filename = args
-                    .value_of("pharmacy").
-                    ok_or(HowserError::RuntimeError(
-                        "Pharmacy filename could not be parsed from the argument string.".to_string()))?;
-                let pharmacy_contents = get_file_contents(filename)?;
-                let specs = &pharmacy_contents.parse::<Value>()?["Specs"];
-                let prescription_pairs = specs
-                    .as_table()
-                    .ok_or(HowserError::RuntimeError(
-                        format!("Error parsing pharmacy file {}.", filename)))?;
+            let rx_name = sub_m
+                .value_of("prescription")
+                .ok_or(HowserError::RuntimeError(
+                    "Unable to parse the name of the prescription file.".to_string()))?;
+            let document_name = sub_m
+                .value_of("document")
+                .ok_or(HowserError::RuntimeError(
+                    "Unable to parse the name of the document file.".to_string()))?;
 
-                (process_pharmacy_file(prescription_pairs, fail_early)?, options)
-            } else {
-                let rx_name = sub_m
-                    .value_of("prescription")
-                    .ok_or(HowserError::RuntimeError(
-                        "Unable to parse the name of the prescription file.".to_string()))?;
-                let document_name = sub_m
-                    .value_of("document")
-                    .ok_or(HowserError::RuntimeError(
-                        "Unable to parse the name of the document file.".to_string()))?;
+            (validate(rx_name, document_name)?, options)
+        },
+        ("pharmacy", Some(sub_m)) => {
+            match sub_m.subcommand() {
+                ("check", Some(sub_m)) => {
+                    let options = vec![CLIOption::VerboseMode(sub_m.is_present("verbose"))];
+                    let fail_early = sub_m.is_present("fail-early");
+                    let filename = sub_m
+                        .value_of("pharmacy").
+                        ok_or(HowserError::RuntimeError(
+                            "Pharmacy filename could not be parsed from the argument string.".to_string()))?;
+                    let pharmacy = parse_pharmacy_file(filename)?;
+                    let keys: Vec<_> = pharmacy.keys().collect();
 
-                (validate(rx_name, document_name)?, options)
+                    (check_pharmacy(&keys, fail_early)?, options)
+                },
+                ("validate", Some(sub_m)) => {
+                    let options = vec![CLIOption::VerboseMode(sub_m.is_present("verbose"))];
+                    let fail_early = sub_m.is_present("fail-early");
+                    let filename = sub_m
+                        .value_of("pharmacy").
+                        ok_or(HowserError::RuntimeError(
+                            "Pharmacy filename could not be parsed from the argument string.".to_string()))?;
+                    let pharmacy = parse_pharmacy_file(filename)?;
+                    let validation_pairs: Vec<(String, Value)> = pharmacy.into_iter().collect();
+
+                    (validate_pharmacy(validation_pairs, fail_early)?, options)
+                },
+                _ => return Err(HowserError::Usage(args.usage().to_string()))
             }
         }
         _ => return Err(HowserError::Usage(args.usage().to_string()))
@@ -86,7 +99,103 @@ fn run(args: &ArgMatches) -> HowserResult<()> {
     Ok(())
 }
 
+fn parse_pharmacy_file(filename: &str) -> HowserResult<BTreeMap<String, Value>> {
+    let pharmacy_contents = get_file_contents(filename)?;
+    let pharmacy = pharmacy_contents.parse::<Value>()?;
+    let ref specs = pharmacy["Specs"];
+    let prescription_pairs = specs
+        .as_table()
+        .ok_or(HowserError::RuntimeError(
+            format!("Error parsing pharmacy file {}.", filename)))?;
+    Ok(prescription_pairs.clone())
+}
+
 fn make_app<'a, 'b>() -> App<'a, 'b> {
+    let check = SubCommand::with_name("check")
+        .about("Verifies that an .rx file conforms to the Rx spec.")
+        .help_message("Prints help information.")
+        .setting(AppSettings::ArgRequiredElseHelp)
+        .arg(
+            Arg::with_name("verbose")
+                .short("v")
+                .long("verbose")
+                .help("Use verbose (multiline) output for errors and warnings."),
+        )
+        .arg(
+            Arg::with_name("prescription")
+                .required(true)
+                .help("Prescription file to check")
+                .takes_value(true)
+                .value_name("PRESCRIPTION"),
+        );
+    let validate = SubCommand::with_name("validate")
+        .about("Validates a Markdown document against an .rx Prescription file.")
+        .help_message("Prints help information.")
+        .setting(AppSettings::ArgRequiredElseHelp)
+        .arg(
+            Arg::with_name("verbose")
+                .short("v")
+                .long("verbose")
+                .help("Use verbose (multiline) output for errors and warnings."),
+        )
+        .arg(
+            Arg::with_name("prescription")
+                .required_unless("pharmacy")
+                .takes_value(true)
+                .value_name("PRESCRIPTION"),
+        )
+        .arg(
+            Arg::with_name("document")
+                .required_unless("pharmacy")
+                .takes_value(true)
+                .value_name("DOCUMENT"),
+        );
+    let pharmacy_check = SubCommand::with_name("check")
+        .about("Verifies that all the .rx files in the pharmacy file conform to the Rx spec.")
+        .help_message("Prints help information.")
+        .setting(AppSettings::ArgRequiredElseHelp)
+        .arg(
+            Arg::with_name("pharmacy")
+                .required(true)
+                .help("The .toml file containing the documents to process.")
+                .takes_value(true)
+                .value_name("PHARMACY"),
+        )
+        .arg(
+            Arg::with_name("verbose")
+                .short("v")
+                .long("verbose")
+                .help("Use verbose (multiline) output for errors and warnings."),
+        )
+        .arg(
+            Arg::with_name("fail-early")
+                .short("-e")
+                .long("fail-early")
+                .help("Stop processing and exit after the first error.")
+        );
+    let pharmacy_validate = SubCommand::with_name("validate")
+        .about("Validates all the Markdown document and .rx Prescription file pairs in the pharmacy file.")
+        .help_message("Prints help information.")
+        .setting(AppSettings::ArgRequiredElseHelp)
+        .arg(
+            Arg::with_name("pharmacy")
+                .required(true)
+                .help("The .toml file containing the documents to process.")
+                .value_name("PHARMACY")
+        )
+        .arg(
+            Arg::with_name("fail-early")
+                .short("-e")
+                .long("fail-early")
+                .help("Stop processing and exit after the first error.")
+        )
+        .arg(
+            Arg::with_name("verbose")
+                .short("v")
+                .long("verbose")
+                .help("Use verbose (multiline) output for errors and warnings."),
+        );
+
     App::new("Howser")
         .about("Document conformity validator for the Rx spec.")
         .version(crate_version!())
@@ -95,62 +204,17 @@ fn make_app<'a, 'b>() -> App<'a, 'b> {
         .setting(AppSettings::SubcommandRequiredElseHelp)
         .setting(AppSettings::VersionlessSubcommands)
         .setting(AppSettings::DisableHelpSubcommand)
+        .subcommand(check.clone())
+        .subcommand(validate.clone())
         .subcommand(
-            SubCommand::with_name("check")
-                .about("Verifies that an .rx file conforms to the Rx spec.")
+            SubCommand::with_name("pharmacy")
+                .about("Specifies prescription and document targets from a pharmacy file.")
                 .help_message("Prints help information.")
-                .setting(AppSettings::ArgRequiredElseHelp)
-                .arg(
-                    Arg::with_name("verbose")
-                        .short("v")
-                        .long("verbose")
-                        .help("Use verbose (multiline) output for errors and warnings."),
-                )
-                .arg(
-                    Arg::with_name("prescription")
-                        .required(true)
-                        .help("Prescription file to check")
-                        .takes_value(true)
-                        .value_name("PRESCRIPTION"),
-                ),
-        )
-        .subcommand(
-            SubCommand::with_name("validate")
-                .about("Validates a Markdown document against an .rx Prescription file.")
-                .help_message("Prints help information.")
-                .setting(AppSettings::ArgRequiredElseHelp)
-                .arg(
-                    Arg::with_name("pharmacy")
-                        .short("-p")
-                        .long("pharmacy")
-                        .help("Performs validation based on a pharmacy .toml file.")
-                        .value_name("PHARMACY")
-                        .takes_value(true),
-                )
-                .arg(
-                    Arg::with_name("fail-early")
-                        .short("-e")
-                        .long("fail-early")
-                        .help("For use with the --pharmacy option. Causes Howser to exit after the first error.")
-                )
-                .arg(
-                    Arg::with_name("verbose")
-                        .short("v")
-                        .long("verbose")
-                        .help("Use verbose (multiline) output for errors and warnings."),
-                )
-                .arg(
-                    Arg::with_name("prescription")
-                        .required_unless("pharmacy")
-                        .takes_value(true)
-                        .value_name("PRESCRIPTION"),
-                )
-                .arg(
-                    Arg::with_name("document")
-                        .required_unless("pharmacy")
-                        .takes_value(true)
-                        .value_name("DOCUMENT"),
-                ),
+                .setting(AppSettings::SubcommandRequiredElseHelp)
+                .setting(AppSettings::DisableHelpSubcommand)
+                .setting(AppSettings::VersionlessSubcommands)
+                .subcommand(pharmacy_check)
+                .subcommand(pharmacy_validate)
         )
 }
 
@@ -174,7 +238,22 @@ fn check(filename: &str) -> HowserResult<Vec<ValidationProblem>> {
     }
 }
 
-fn process_pharmacy_file(spec_pairs: &BTreeMap<String, Value>, fail_early: bool) -> HowserResult<Vec<ValidationProblem>> {
+fn check_pharmacy(prescriptions: &Vec<&String>, fail_early: bool) -> HowserResult<Vec<ValidationProblem>> {
+    let mut report: Vec<ValidationProblem> = Vec::new();
+
+    for rx_file in prescriptions {
+        let mut problems = check(rx_file)?;
+        if fail_early && !problems.is_empty() {
+            return Ok(problems);
+        } else {
+            report.append(&mut problems);
+        }
+    }
+
+    Ok(report)
+}
+
+fn validate_pharmacy(spec_pairs: Vec<(String, Value)>, fail_early: bool) -> HowserResult<Vec<ValidationProblem>> {
     let mut report: Vec<ValidationProblem> = Vec::new();
 
     for (rx_file, doc_value) in spec_pairs {
@@ -182,8 +261,7 @@ fn process_pharmacy_file(spec_pairs: &BTreeMap<String, Value>, fail_early: bool)
                 .as_str()
                 .ok_or(HowserError::RuntimeError(
                     "The document corresponding to {} could not be parsed as a string.".to_string()))?;
-
-        let mut problems = validate(rx_file, doc_file)?;
+        let mut problems = validate(rx_file.as_str(), doc_file)?;
         if fail_early && !problems.is_empty() {
             return Ok(problems);
         } else {
@@ -287,6 +365,25 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_pharmacy_check_subcommand() {
+        let app = super::make_app();
+        let pharmacy_file = "pharmacy.toml";
+        let matches = app.get_matches_from(vec!["howser", "pharmacy", "check", pharmacy_file]);
+        let pharmacy_matches = matches.subcommand_matches("pharmacy").expect("Does not contain pharmacy subcommand");
+        let check_matches = pharmacy_matches.subcommand_matches("check").expect("Does not containt check subcommand");
+        assert_eq!(check_matches.value_of("pharmacy"), Some(pharmacy_file));
+    }
+
+    #[test]
+    fn test_pharmacy_validate_subcommand() {
+        let app = super::make_app();
+        let pharmacy_file = "pharmacy.toml";
+        let matches = app.get_matches_from(vec!["howser", "pharmacy", "validate", pharmacy_file]);
+        let pharmacy_matches = matches.subcommand_matches("pharmacy").expect("Does not contain pharmacy subcommand");
+        let check_matches = pharmacy_matches.subcommand_matches("validate").expect("Does not containt validate subcommand");
+        assert_eq!(check_matches.value_of("pharmacy"), Some(pharmacy_file));
+    }
 }
 
 /// Returns the textual content of the indicated file
