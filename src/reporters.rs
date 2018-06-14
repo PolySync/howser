@@ -14,7 +14,7 @@ pub enum CLIOption {
 }
 
 /// Returns a textual report of the validation results suitable for display in a CLI environment.
-pub fn make_cli_report(issues: &Option<ValidationProblem>, config: Vec<CLIOption>) -> String {
+pub fn make_cli_report(issues: &Vec<ValidationProblem>, config: &Vec<CLIOption>) -> String {
     let mut report: Vec<String> = Vec::new();
 
     let mut verbose_mode = false;
@@ -27,19 +27,19 @@ pub fn make_cli_report(issues: &Option<ValidationProblem>, config: Vec<CLIOption
 
     for option in config {
         match option {
-            CLIOption::SuccessMessage(message) => success_message = message,
-            CLIOption::VerboseMode(mode) => verbose_mode = mode,
+            CLIOption::SuccessMessage(message) => success_message = message.to_string(),
+            CLIOption::VerboseMode(mode) => verbose_mode = *mode,
         }
     }
 
-    if let &Some(ref issue) = issues {
+    for issue in issues {
         report.push(match verbose_mode {
             true => issue.long_msg(),
             false => issue.short_msg(),
         });
     }
 
-    if issues.is_none() {
+    if issues.is_empty() {
         report.push(success_message);
     }
 

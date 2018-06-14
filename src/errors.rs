@@ -2,10 +2,12 @@
 
 extern crate regex;
 extern crate termion;
+extern crate toml;
 
 use self::regex::Error as RegexError;
 use self::termion::color;
 use self::termion::style;
+use self::toml::de::Error as TomlError;
 use data::ContentMatchPair;
 use document::{Document, Prescription};
 use doogie::constants::NodeType;
@@ -32,6 +34,7 @@ pub enum HowserError {
     CapabilityError,
     RegexError(RegexError),
     PrescriptionError(SpecWarning),
+    TomlError(TomlError),
 }
 
 impl error::Error for HowserError {
@@ -44,6 +47,7 @@ impl error::Error for HowserError {
             &HowserError::CapabilityError => "Capability Error",
             &HowserError::RegexError(ref error) => error.description(),
             &HowserError::PrescriptionError(_) => "Prescription Error",
+            &HowserError::TomlError(_) => "TomlError",
         }
     }
 
@@ -82,6 +86,12 @@ impl From<RegexError> for HowserError {
 }
 
 /// Trait for aggregating validation problems.
+impl From<TomlError> for HowserError {
+    fn from(err: TomlError) -> Self {
+        HowserError::TomlError(err)
+    }
+}
+
 pub trait Reportable {
     /// Report in standard single line format.
     fn short_msg(&self) -> String;
