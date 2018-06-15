@@ -14,6 +14,7 @@ use howser::validator::Validator;
 use std::error::Error;
 use std::fs::File;
 use std::io::prelude::*;
+use std::path::{Path, PathBuf};
 use std::str;
 use std::collections::BTreeMap;
 use toml::Value;
@@ -71,9 +72,7 @@ fn run(args: &ArgMatches) -> HowserResult<()> {
                         ok_or(HowserError::RuntimeError(
                             "Pharmacy filename could not be parsed from the argument string.".to_string()))?;
                     let pharmacy = parse_pharmacy_file(filename)?;
-                    let keys: Vec<_> = pharmacy.keys().collect();
-
-                    (check_pharmacy(&keys, fail_early)?, options)
+                    (check_pharmacy(&pharmacy, fail_early)?, options)
                 },
                 ("validate", Some(sub_m)) => {
                     let options = vec![CLIOption::VerboseMode(sub_m.is_present("verbose"))];
@@ -83,9 +82,7 @@ fn run(args: &ArgMatches) -> HowserResult<()> {
                         ok_or(HowserError::RuntimeError(
                             "Pharmacy filename could not be parsed from the argument string.".to_string()))?;
                     let pharmacy = parse_pharmacy_file(filename)?;
-                    let validation_pairs: Vec<(String, Value)> = pharmacy.into_iter().collect();
-
-                    (validate_pharmacy(validation_pairs, fail_early)?, options)
+                    (validate_pharmacy(&pharmacy, fail_early)?, options)
                 },
                 _ => return Err(HowserError::Usage(args.usage().to_string()))
             }
@@ -99,15 +96,45 @@ fn run(args: &ArgMatches) -> HowserResult<()> {
     Ok(())
 }
 
-fn parse_pharmacy_file(filename: &str) -> HowserResult<BTreeMap<String, Value>> {
+fn parse_pharmacy_file(filename: &str) -> HowserResult<Pharmacy> {
     let pharmacy_contents = get_file_contents(filename)?;
-    let pharmacy = pharmacy_contents.parse::<Value>()?;
+    parse_pharmacy_string(filename, pharmacy_contents)
+}
+
+fn parse_pharmacy_string(filename: &str, pharmacy_file_contents: String) -> HowserResult<Pharmacy> {
+    let pharmacy = pharmacy_file_contents.parse::<Value>()?;
     let ref specs = pharmacy["Specs"];
     let prescription_pairs = specs
         .as_table()
         .ok_or(HowserError::RuntimeError(
             format!("Error parsing pharmacy file {}.", filename)))?;
-    Ok(prescription_pairs.clone())
+    let mut spec_to_targets:BTreeMap<PathBuf, Vec<PathBuf>> = BTreeMap::new();
+    for (key, value) in prescription_pairs {
+        let targets:Vec<PathBuf> = match *value {
+            Value::String(ref s) => vec![PathBuf::from(s)],
+            Value::Array(ref array) => {
+                array.iter().map(|a| if let Some(s) = a.as_str() {
+                    Ok(PathBuf::from(s))
+                } else {
+                    Err(HowserError::RuntimeError(
+                        format!("Error parsing pharmacy file {}. Target value was not a string or array of strings", filename)))
+                })
+                    .collect::<Result<Vec<PathBuf>, HowserError>>()?
+            },
+            _ => return Err(HowserError::RuntimeError(
+            format!("Error parsing pharmacy file {}. Target value was not a string or array of strings", filename))),
+        };
+        spec_to_targets.insert(PathBuf::from(key), targets);
+    }
+    Ok(Pharmacy { spec_to_targets })
+}
+
+/// Named wrapper around the mapping between the file locations
+/// for Rx spec files and their associated target documents intended
+/// for validation.
+#[derive(Clone, Debug, PartialEq)]
+struct Pharmacy {
+    spec_to_targets: BTreeMap<PathBuf, Vec<PathBuf>>
 }
 
 fn make_app<'a, 'b>() -> App<'a, 'b> {
@@ -218,18 +245,18 @@ fn make_app<'a, 'b>() -> App<'a, 'b> {
         )
 }
 
-fn validate(rx_name: &str, document_name: &str) -> HowserResult<Vec<ValidationProblem>> {
-    let rx_root = parse_document(&get_file_contents(rx_name)?);
-    let doc_root = parse_document(&get_file_contents(document_name)?);
-    let rx = Document::new(&rx_root, Some(rx_name.to_string()))?.into_prescription()?;
-    let document = Document::new(&doc_root, Some(document_name.to_string()))?;
+fn validate<P: AsRef<Path>, Q: AsRef<Path>>(rx_name: P, document_name: Q) -> HowserResult<Vec<ValidationProblem>> {
+    let rx_root = parse_document(&get_file_contents(&rx_name)?);
+    let doc_root = parse_document(&get_file_contents(&document_name)?);
+    let rx = Document::new(&rx_root, rx_name.as_ref().to_str().map(|s| s.to_string()))?.into_prescription()?;
+    let document = Document::new(&doc_root, document_name.as_ref().to_str().map(|s| s.to_string()))?;
 
     Validator::new(rx, document).validate()
 }
 
-fn check(filename: &str) -> HowserResult<Vec<ValidationProblem>> {
-    let rx_root = parse_document(&get_file_contents(filename)?);
-    let document = Document::new(&rx_root, Some(filename.to_string()))?;
+fn check<P: AsRef<Path>>(filename: P) -> HowserResult<Vec<ValidationProblem>> {
+    let rx_root = parse_document(&get_file_contents(&filename)?);
+    let document = Document::new(&rx_root, filename.as_ref().to_str().map(|s| s.to_string()))?;
 
     match document.into_prescription() {
         Err(HowserError::PrescriptionError(warning)) => Ok(vec![Box::new(warning)]),
@@ -238,11 +265,11 @@ fn check(filename: &str) -> HowserResult<Vec<ValidationProblem>> {
     }
 }
 
-fn check_pharmacy(prescriptions: &Vec<&String>, fail_early: bool) -> HowserResult<Vec<ValidationProblem>> {
+fn check_pharmacy(pharmacy: &Pharmacy, fail_early: bool) -> HowserResult<Vec<ValidationProblem>> {
     let mut report: Vec<ValidationProblem> = Vec::new();
 
-    for rx_file in prescriptions {
-        let mut problems = check(rx_file)?;
+    for rx_file in pharmacy.spec_to_targets.keys() {
+        let mut problems = check(&rx_file)?;
         if fail_early && !problems.is_empty() {
             return Ok(problems);
         } else {
@@ -253,19 +280,17 @@ fn check_pharmacy(prescriptions: &Vec<&String>, fail_early: bool) -> HowserResul
     Ok(report)
 }
 
-fn validate_pharmacy(spec_pairs: Vec<(String, Value)>, fail_early: bool) -> HowserResult<Vec<ValidationProblem>> {
+fn validate_pharmacy(pharmacy: &Pharmacy, fail_early: bool) -> HowserResult<Vec<ValidationProblem>> {
     let mut report: Vec<ValidationProblem> = Vec::new();
 
-    for (rx_file, doc_value) in spec_pairs {
-        let doc_file = doc_value
-                .as_str()
-                .ok_or(HowserError::RuntimeError(
-                    "The document corresponding to {} could not be parsed as a string.".to_string()))?;
-        let mut problems = validate(rx_file.as_str(), doc_file)?;
-        if fail_early && !problems.is_empty() {
-            return Ok(problems);
-        } else {
-            report.append(&mut problems);
+    for (rx_file, target_docs) in pharmacy.spec_to_targets.iter() {
+        for doc_file in target_docs {
+            let mut problems = validate(&rx_file, doc_file)?;
+            if fail_early && !problems.is_empty() {
+                return Ok(problems);
+            } else {
+                report.append(&mut problems);
+            }
         }
     }
 
@@ -274,7 +299,10 @@ fn validate_pharmacy(spec_pairs: Vec<(String, Value)>, fail_early: bool) -> Hows
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
     use super::clap::ErrorKind;
+    use super::{parse_pharmacy_string, HowserError, Pharmacy};
 
     #[test]
     fn test_validate_subcommand() {
@@ -384,13 +412,52 @@ mod tests {
         let check_matches = pharmacy_matches.subcommand_matches("validate").expect("Does not containt validate subcommand");
         assert_eq!(check_matches.value_of("pharmacy"), Some(pharmacy_file));
     }
+
+    #[test]
+    fn parse_pharmacy_allows_empty_table() {
+        assert_eq!(Pharmacy { spec_to_targets: BTreeMap::new() },
+                   parse_pharmacy_string("test_file", r#"[Specs]"#.to_string())
+                       .expect("Should have been able to parse"));
+    }
+
+    #[test]
+    fn parse_pharmacy_supports_string_values() {
+        let mut m = BTreeMap::new();
+        m.insert(PathBuf::from("README.rx"), vec![PathBuf::from("README.md")]);
+        assert_eq!(Pharmacy { spec_to_targets: m },
+                   parse_pharmacy_string("test_file", r#"[Specs]
+                   "README.rx" = "README.md""#.to_string())
+                       .expect("Should have been able to parse"));
+    }
+
+    #[test]
+    fn parse_pharmacy_supports_array_of_string_values() {
+        let mut m = BTreeMap::new();
+        m.insert(PathBuf::from("README.rx"), vec![
+            PathBuf::from("README.md"), PathBuf::from("subdir/README.md")]);
+        assert_eq!(Pharmacy { spec_to_targets: m },
+                   parse_pharmacy_string("test_file", r#"[Specs]
+                   "README.rx" = ["README.md", "subdir/README.md"]"#.to_string())
+                       .expect("Should have been able to parse"));
+    }
+
+    #[test]
+    fn parse_pharmacy_disallows_duplicate_keys() {
+        let result = parse_pharmacy_string("test_file", r#"[Specs]
+            "README.rx" = "README.md"
+            "README.rx" = "subdir/README.md""#.to_string());
+        match result {
+            Err(HowserError::TomlError(_)) => println!("As expected"),
+            x @ _ => panic!("Unexpected success or kind of error: {:?}", x),
+        }
+    }
 }
 
 /// Returns the textual content of the indicated file
 ///
 /// # Arguments
 /// 'file_name': The name of the file to get.
-fn get_file_contents(file_name: &str) -> HowserResult<String> {
+fn get_file_contents<P: AsRef<Path>>(file_name: P) -> HowserResult<String> {
     let mut file = File::open(file_name)?;
     let mut contents = String::new();
     file.read_to_string(&mut contents)?;
