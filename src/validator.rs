@@ -1565,7 +1565,7 @@ mod tests {
 
         let report = validator.validate().unwrap();
 
-        assert!(report.is_none());
+        assert!(report.is_empty());
     }
 
     #[test]
