@@ -7,9 +7,9 @@ authors = ["Devin Smith <dsmith@polysync.io>"]
 num = "0.1.41"
 clap = "~2.29"
 unicode-segmentation = "1.2.0"
-doogie = { git="https://github.com/PolySync/doogie" }
+doogie = { git="https://github.com/PolySync/doogie", branch = "remove_capability_system" }
 regex = "0.2"
-env_logger = "0.5.9"
+env_logger = "0.5.10"
 log = "0.4.1"
 termion = "1"
 toml = "0.4"

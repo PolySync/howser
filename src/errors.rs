@@ -10,7 +10,6 @@ use self::termion::style;
 use self::toml::de::Error as TomlError;
 use data::ContentMatchPair;
 use document::{Document, Prescription};
-use doogie::constants::NodeType;
 use doogie::errors::DoogieError;
 use doogie::Node;
 use helpers::cli;
@@ -220,11 +219,11 @@ impl Reportable for DocumentError {
 struct ErrorInfo {
     pub node_file: String,
     pub node_line: usize,
-    pub node_type: NodeType,
+    pub node_type: String,
     pub node_snippet: String,
     pub rx_file: String,
     pub rx_line: usize,
-    pub rx_type: NodeType,
+    pub rx_type: String,
     pub rx_snippet: String,
 }
 
@@ -240,36 +239,16 @@ impl ErrorInfo {
             .unwrap_or(&"Unknown".to_string())
             .to_string();
         let node_line = Document::get_line_num(doc_node)?;
-        let node_type = doc_node
-            .capabilities
-            .get
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?
-            .get_type()?;
-        let node_snippet = doc_node
-            .capabilities
-            .render
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?
-            .render_commonmark();
+        let node_type = doc_node.get_cmark_type_string()?;
+        let node_snippet = doc_node.render_commonmark();
         let rx_file = rx.document
             .filename
             .as_ref()
             .unwrap_or(&"Unknown".to_string())
             .clone();
         let rx_line = Document::get_line_num(rx_node)?;
-        let rx_type = rx_node
-            .capabilities
-            .get
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?
-            .get_type()?;
-        let rx_snippet = rx_node
-            .capabilities
-            .render
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?
-            .render_commonmark();
+        let rx_type = rx_node.get_cmark_type_string()?;
+        let rx_snippet = rx_node.render_commonmark();
 
         Ok(ErrorInfo {
             node_file,
@@ -466,8 +445,8 @@ fn file_info(filename: &str, line: usize) -> String {
     )
 }
 
-fn node_type_string(node_type: &NodeType) -> String {
-    format!("{}{:?}{}", style::Bold, node_type, style::Reset)
+fn node_type_string(node_type: &String) -> String {
+    format!("{}{}{}", style::Bold, node_type, style::Reset)
 }
 
 fn ok_text(text: &str) -> String {

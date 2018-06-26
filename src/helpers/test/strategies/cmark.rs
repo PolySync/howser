@@ -1,7 +1,7 @@
 use super::content::matches::arb_content_matches;
 use data::{ContentMatchPair, PromptToken};
 use doogie::constants::NodeType;
-use doogie::{CapabilityFactory, Node, NodeFactory};
+use doogie::{Node, Text};
 use proptest::prelude::*;
 use std::ops::Range;
 use std::rc::Rc;
@@ -406,14 +406,13 @@ pub fn container_block_type() -> BoxedStrategy<NodeType> {
 }
 
 fn node_of_type(node_type: NodeType, annotation: Option<PromptToken>) -> Node {
-    let node_factory = NodeFactory::new(CapabilityFactory::new().with_all());
-    let node = node_factory.build(node_type.clone());
+    let node = Node::from_type(node_type).unwrap();
 
     if let Some(token) = annotation {
-        match node_type {
-            NodeType::CMarkNodeHeading | NodeType::CMarkNodeParagraph => {
+        match node {
+            Node::Heading(_) | Node::Paragraph(_) => {
                 append_to(&node, vec![text_node(&token.to_string())])
-            }
+            },
             _ => unimplemented!(),
         }
     }
@@ -422,29 +421,13 @@ fn node_of_type(node_type: NodeType, annotation: Option<PromptToken>) -> Node {
 }
 
 pub fn text_node(content: &String) -> Node {
-    let node_factory = NodeFactory::new(CapabilityFactory::new().with_all());
-    let text_node = node_factory.build(NodeType::CMarkNodeText);
-    {
-        let setter = text_node
-            .capabilities
-            .set
-            .as_ref()
-            .expect("Expected a NodeSetter");
-        setter
-            .set_content(&content)
-            .expect("Expected content to be set");
-    }
-    text_node
+    let node = Text::new();
+    node.set_content(content).unwrap();
+    Node::Text(node)
 }
 
 fn append_to(parent: &Node, children: Vec<Node>) {
-    let mutator = parent
-        .capabilities
-        .mutate
-        .as_ref()
-        .expect("Expected a mutator");
-
     for mut child in children {
-        mutator.append_child(&mut child).unwrap();
+        parent.append_child(&mut child).unwrap();
     }
 }
