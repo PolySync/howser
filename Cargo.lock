@@ -121,7 +121,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 [[package]]
 name = "doogie"
 version = "0.1.0"
-source = "git+https://github.com/PolySync/doogie?branch=remove_capability_system#49146e2ace3e2203b37b706b26ecd1ec05034c9d"
+source = "git+https://github.com/PolySync/doogie?branch=remove_capability_system#fb8f4351dfc1ad2c3004de7b7022d524109da35f"
 dependencies = [
  "cmake 0.1.31 (registry+https://github.com/rust-lang/crates.io-index)",
  "env_logger 0.5.10 (registry+https://github.com/rust-lang/crates.io-index)",

@@ -211,7 +211,7 @@ fn process_child_block_elements(parent: &Node, document: &Document) -> HowserRes
                 current_child = target.next_sibling()?;
             },
             (
-                LookaheadType::DiscreteAnnotated(annotation, match_type),
+                LookaheadType::DiscreteAnnotated(mut annotation, match_type),
                 LookaheadType::DiscreteLiteral(target),
             ) => {
                 document.set_match_type(&target, match_type)?;
@@ -219,10 +219,10 @@ fn process_child_block_elements(parent: &Node, document: &Document) -> HowserRes
                 current_child = Some(target);
             },
             (
-                LookaheadType::DiscreteAnnotated(target, match_type),
+                LookaheadType::DiscreteAnnotated(mut target, match_type),
                 LookaheadType::Ditto(ditto),
             ) => {
-                remove_annotation(&target)?;
+                remove_annotation(&mut target)?;
                 document.set_match_type(&target, match_type)?;
                 document.set_is_wildcard(&target, true)?;
                 document.set_match_type(&ditto, MatchType::Repeatable)?;
@@ -252,40 +252,40 @@ fn process_child_block_elements(parent: &Node, document: &Document) -> HowserRes
                 current_child = target.next_sibling()?;
             },
             (
-                LookaheadType::IntegratedVacant(target, match_type),
+                LookaheadType::IntegratedVacant(mut target, match_type),
                 LookaheadType::Ditto(ditto),
             ) => {
-                remove_annotation(&target)?;
+                remove_annotation(&mut target)?;
                 document.set_match_type(&target, match_type)?;
                 document.set_match_type(&ditto, MatchType::Repeatable)?;
                 document.set_is_wildcard(&target, true)?;
                 current_child = ditto.next_sibling()?;
             },
             (
-                LookaheadType::IntegratedVacant(target, match_type),
+                LookaheadType::IntegratedVacant(mut target, match_type),
                 _,
             ) => {
-                remove_annotation(&target)?;
+                remove_annotation(&mut target)?;
                 document.set_match_type(&target, match_type)?;
                 document.set_is_wildcard(&target, true)?;
                 current_child = target.next_sibling()?;
             },
             (
-                LookaheadType::IntegratedOccupied(target, match_type),
+                LookaheadType::IntegratedOccupied(mut target, match_type),
                 LookaheadType::Ditto(ditto),
             ) => {
                 process_child_elements(&target, document)?;
-                remove_annotation(&target)?;
+                remove_annotation(&mut target)?;
                 document.set_match_type(&target, match_type)?;
                 document.set_match_type(&ditto, MatchType::Repeatable)?;
                 current_child = ditto.next_sibling()?;
             },
             (
-                LookaheadType::IntegratedOccupied(target, match_type),
+                LookaheadType::IntegratedOccupied(mut target, match_type),
                 _,
             ) => {
                 process_child_elements(&target, document)?;
-                remove_annotation(&target)?;
+                remove_annotation(&mut target)?;
                 document.set_match_type(&target, match_type)?;
                 current_child = target.next_sibling()?;
             },
@@ -324,7 +324,7 @@ fn get_annotation(node: &Node) -> HowserResult<MatchType> {
 }
 
 /// Strips the annotation from a block level element if one exists.
-fn remove_annotation(node: &Node) -> HowserResult<()> {
+fn remove_annotation(node: &mut Node) -> HowserResult<()> {
     trace!("remove_annotation()");
     match node
     {
@@ -359,19 +359,20 @@ fn get_paragraph_annotation(node: &Node) -> HowserResult<MatchType> {
 }
 
 /// Strips the block-level annotation from a paragraph node if one exists.
-fn remove_paragraph_annotation(node: &Node) -> HowserResult<()> {
-    if let Some(text_node @ Node::Text(_)) = node.first_child()? {
+fn remove_paragraph_annotation(node: &mut Node) -> HowserResult<()> {
+    if let Some(mut text_node @ Node::Text(_)) = node.first_child()? {
         let sibling = text_node.next_sibling()?;
         match sibling {
             Some(Node::SoftBreak(_)) | None => {
-                if let Node::Text(ref text) = text_node {
-                    let content = text.get_content()?;
-                    let (token, remainder) = extract_match_type(&content)?;
-                    if token != MatchType::None && remainder.is_empty() {
-                        text_node.unlink();
-                        if let Some(node) = sibling {
-                            node.unlink();
-                        }
+                let match_result = match text_node {
+                    Node::Text(ref text) => extract_match_type(&text.get_content()?)?,
+                    _ => (MatchType::None, String::new())
+                };
+                let (token, remainder) = match_result;
+                if token != MatchType::None && remainder.is_empty() {
+                    text_node.unlink();
+                    if let Some(mut node) = sibling {
+                        node.unlink();
                     }
                 }
             },
@@ -393,9 +394,9 @@ fn get_block_quote_annotation(node: &Node) -> HowserResult<MatchType> {
 }
 
 /// Strips the block-level annotation from a block quote node if one exists.
-fn remove_block_quote_annotation(node: &Node) -> HowserResult<()> {
+fn remove_block_quote_annotation(node: &mut Node) -> HowserResult<()> {
     if let Some(Node::Paragraph(_)) = node.first_child()? {
-        remove_paragraph_annotation(&node)?;
+        remove_paragraph_annotation(node)?;
         if node.first_child()?.is_none() {
             node.unlink();
         }
@@ -415,8 +416,8 @@ fn get_code_block_annotation(node: &Node) -> HowserResult<MatchType> {
 }
 
 /// Strips the annotation from a code block node if one exists.
-fn remove_code_block_annotation(node: &Node) -> HowserResult<()> {
-    if let Node::CodeBlock(code_block) = node {
+fn remove_code_block_annotation(node: &mut Node) -> HowserResult<()> {
+    if let Node::CodeBlock(ref mut code_block) = node {
         let (match_type, content) = extract_match_type(&code_block.get_fence_info()?)?;
         if match_type != MatchType::None {
             code_block.set_fence_info(&content)?;
@@ -446,13 +447,15 @@ fn get_heading_annotation(heading_node: &Node) -> HowserResult<MatchType> {
 
 /// Strips the block-level annotation from a heading node if one exists.
 fn remove_heading_annotation(heading_node: &Node) -> HowserResult<()> {
-    if let Some(text_node) = heading_node.first_child()? {
-        if let Node::Text(ref text) = text_node {
-            if text_node.next_sibling()?.is_none() {
-                let (match_type, content) = extract_match_type(&text.get_content()?)?;
-                if match_type != MatchType::None && content.is_empty() {
-                    text_node.unlink();
-                }
+    if let Some(mut text_node @ Node::Text(_)) = heading_node.first_child()? {
+        let match_result = match text_node {
+            Node::Text(ref text) => extract_match_type(&text.get_content()?)?,
+            _ => (MatchType::None, String::new())
+        };
+        if text_node.next_sibling()?.is_none() {
+            let (match_type, content) = match_result;
+            if match_type != MatchType::None && content.is_empty() {
+                text_node.unlink();
             }
         }
     }
@@ -471,10 +474,10 @@ fn get_item_annotation(item_node: &Node) -> HowserResult<MatchType> {
 
 /// Strips the block-level annotation from a list item node if one exists.
 fn remove_item_annotation(item_node: &Node) -> HowserResult<()> {
-    if let Some(paragraph_node @ Node::Paragraph(_)) = item_node.first_child()? {
+    if let Some(mut paragraph_node @ Node::Paragraph(_)) = item_node.first_child()? {
         let token = get_paragraph_annotation(&paragraph_node)?;
         if token != MatchType::None {
-            remove_paragraph_annotation(&paragraph_node)?;
+            remove_paragraph_annotation(&mut paragraph_node)?;
             paragraph_node.unlink();
         }
     }
@@ -532,7 +535,7 @@ fn extract_match_type(content: &String) -> HowserResult<(MatchType, String)> {
 
 /// Strips all html from the document.
 fn strip_comments(root: &Node) -> HowserResult<()> {
-    for (node, _) in root.iter()
+    for (mut node, _) in root.iter()
     {
         match node
         {
