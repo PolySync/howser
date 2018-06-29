@@ -2,7 +2,7 @@
 
 use constants::{MANDATORY_PROMPT, OPTIONAL_PROMPT};
 use doogie::Node;
-use errors::{HowserResult};
+use errors::HowserResult;
 use std::fmt::{Debug, Error, Formatter};
 
 /// Element-Level match types for `Node`s.
@@ -124,26 +124,24 @@ pub enum ElementType {
 impl ElementType {
     pub fn determine(node: &Node) -> HowserResult<Self> {
         match node {
-            Node::Document(_) |
-                Node::List(_) |
-                Node::BlockQuote(_) |
-                Node::Item(_) => Ok(ElementType::ContainerBlock),
-            Node::Paragraph(_) |
-                Node::Heading(_) |
-                Node::CodeBlock(_) |
-                Node::ThematicBreak(_) |
-                Node::HtmlBlock(_) |
-                Node::CustomBlock(_) => Ok(ElementType::LeafBlock),
-            Node::Emph(_) |
-                Node::Strong(_) |
-                Node::Link(_) |
-                Node::Image(_) => Ok(ElementType::InlineContainer),
-            Node::Text(_) |
-                Node::SoftBreak(_) |
-                Node::LineBreak(_) |
-                Node::Code(_) |
-                Node::HtmlInline(_) |
-                Node::CustomInline(_) => Ok(ElementType::InlineLeaf),
+            Node::Document(_) | Node::List(_) | Node::BlockQuote(_) | Node::Item(_) => {
+                Ok(ElementType::ContainerBlock)
+            }
+            Node::Paragraph(_)
+            | Node::Heading(_)
+            | Node::CodeBlock(_)
+            | Node::ThematicBreak(_)
+            | Node::HtmlBlock(_)
+            | Node::CustomBlock(_) => Ok(ElementType::LeafBlock),
+            Node::Emph(_) | Node::Strong(_) | Node::Link(_) | Node::Image(_) => {
+                Ok(ElementType::InlineContainer)
+            }
+            Node::Text(_)
+            | Node::SoftBreak(_)
+            | Node::LineBreak(_)
+            | Node::Code(_)
+            | Node::HtmlInline(_)
+            | Node::CustomInline(_) => Ok(ElementType::InlineLeaf),
         }
     }
 }

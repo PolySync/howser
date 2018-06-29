@@ -1,16 +1,16 @@
-use tempfile::{NamedTempFile};
 use std::fs;
+use tempfile::NamedTempFile;
 
 pub struct PharmacyFixture {
     file: NamedTempFile,
-    specs: Vec<SpecFixture>
+    specs: Vec<SpecFixture>,
 }
 
 impl PharmacyFixture {
     pub fn new() -> Self {
         PharmacyFixture {
             file: NamedTempFile::new().unwrap(),
-            specs: Vec::new()
+            specs: Vec::new(),
         }
     }
 
@@ -53,7 +53,7 @@ impl PharmacyFixture {
         };
         self.add_spec(SpecFixture {
             prescription: Box::new(rx),
-            document: Box::new(doc)
+            document: Box::new(doc),
         });
     }
 
@@ -79,12 +79,16 @@ impl PharmacyFixture {
 
 struct SpecFixture {
     prescription: Box<Document>,
-    document: Box<Document>
+    document: Box<Document>,
 }
 
 impl SpecFixture {
     fn to_string(&self) -> String {
-        format!("\"{}\" = \"{}\"", self.prescription.get_path(), self.document.get_path())
+        format!(
+            "\"{}\" = \"{}\"",
+            self.prescription.get_path(),
+            self.document.get_path()
+        )
     }
 
     fn persist(&self) {
@@ -103,7 +107,7 @@ trait Document {
 
 struct ValidPrescriptionFixture {
     content: String,
-    file: NamedTempFile
+    file: NamedTempFile,
 }
 
 impl Document for ValidPrescriptionFixture {
@@ -121,7 +125,7 @@ impl Document for ValidPrescriptionFixture {
 }
 
 struct MissingPrescriptionFixture {
-    path: String
+    path: String,
 }
 
 impl MissingPrescriptionFixture {
@@ -149,7 +153,7 @@ impl Document for MissingPrescriptionFixture {
 
 struct DocumentFixture {
     content: String,
-    file: NamedTempFile
+    file: NamedTempFile,
 }
 
 impl Document for DocumentFixture {
@@ -167,7 +171,7 @@ impl Document for DocumentFixture {
 }
 
 pub struct MissingDocumentFixture {
-    path: String
+    path: String,
 }
 
 impl MissingDocumentFixture {
@@ -197,7 +201,8 @@ impl ValidPrescriptionFixture {
     pub fn new() -> Self {
         ValidPrescriptionFixture {
             content: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed a augue vel \
-            ipsum aliquam porttitor. Curabitur feugiat, diam eget tincidunt. ".to_string(),
+                      ipsum aliquam porttitor. Curabitur feugiat, diam eget tincidunt. "
+                .to_string(),
             file: NamedTempFile::new().unwrap(),
         }
     }
@@ -216,6 +221,5 @@ impl ValidPrescriptionFixture {
             content,
             file: NamedTempFile::new().unwrap(),
         }
-
     }
 }

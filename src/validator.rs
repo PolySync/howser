@@ -9,12 +9,10 @@ use constants::{CONTENT_PROMPT_PATTERN, MANDATORY_PROMPT, OPTIONAL_PROMPT};
 use data::ElementType;
 use data::{ContentMatchPair, MatchType, PromptToken};
 use document::{Document, Prescription};
-use doogie::{
-    Node,
-};
+use doogie::Node;
 use errors::{
-    DocumentError, HowserError, HowserResult, Reportable, TextualContentError,
-    TypeMismatchError, ValidationProblem,
+    DocumentError, HowserError, HowserResult, Reportable, TextualContentError, TypeMismatchError,
+    ValidationProblem,
 };
 use std::collections::VecDeque;
 
@@ -93,14 +91,20 @@ impl<'a> Validator<'a> {
         let mut current_bookmark = parent_doc_node.first_child()?;
 
         while let Some(rx) = current_rx {
-
             let is_repeatable = match rx.next_sibling()? {
-                Some(next_rx) => self.prescription.document.get_match_type(&next_rx)? == MatchType::Repeatable,
-                _ => false
+                Some(next_rx) => {
+                    self.prescription.document.get_match_type(&next_rx)? == MatchType::Repeatable
+                }
+                _ => false,
             };
 
             if is_repeatable {
-                match self.consume_repeatable_matches(rx, current_node, current_bookmark, parent_doc_node)? {
+                match self.consume_repeatable_matches(
+                    rx,
+                    current_node,
+                    current_bookmark,
+                    parent_doc_node,
+                )? {
                     MatchResult::State(state) => {
                         let MatchState {
                             rx,
@@ -117,7 +121,8 @@ impl<'a> Validator<'a> {
                     }
                 }
             } else {
-                match self.consume_block_match(rx, current_node, current_bookmark, parent_doc_node)? {
+                match self.consume_block_match(rx, current_node, current_bookmark, parent_doc_node)?
+                {
                     MatchResult::State(state) => {
                         let MatchState {
                             rx,
@@ -213,15 +218,9 @@ impl<'a> Validator<'a> {
         parent_node: &Node,
     ) -> HowserResult<MatchResult> {
         trace!("consume_block_match::");
-        info!(
-            "Rx: {}",
-            rx.render_xml()
-        );
+        info!("Rx: {}", rx.render_xml());
         if let Some(ref node) = node {
-            info!(
-                "Doc: {}",
-                node.render_xml()
-            );
+            info!("Doc: {}", node.render_xml());
         }
 
         match self.prescription.document.get_match_type(&rx)? {
@@ -267,16 +266,10 @@ impl<'a> Validator<'a> {
         parent_node: &Node,
     ) -> HowserResult<MatchResult> {
         trace!("consume_inline_match::");
-        info!(
-            "Rx: {}",
-            rx.render_xml()
-        );
+        info!("Rx: {}", rx.render_xml());
 
         if let Some(ref node) = node {
-            info!(
-                "Doc: {}",
-                node.render_xml()
-            );
+            info!("Doc: {}", node.render_xml());
         }
 
         match self.prescription.document.get_match_type(&rx)? {
@@ -317,9 +310,9 @@ impl<'a> Validator<'a> {
         parent_node: &Node,
     ) -> HowserResult<MatchResult> {
         trace!("consume_repeatable_matches()");
-        let out_rx= match rx.next_sibling()? {
+        let out_rx = match rx.next_sibling()? {
             Some(ditto_node) => ditto_node.next_sibling()?,
-            _ => None
+            _ => None,
         };
         let mut out_node = match node {
             Some(ref node) => Some(node.itself()?),
@@ -346,12 +339,8 @@ impl<'a> Validator<'a> {
                 Some(ref node) => node.get_id(),
                 _ => 0,
             };
-            let match_result = self.consume_block_match(
-                current_rx,
-                current_node,
-                current_bookmark,
-                parent_node,
-            )?;
+            let match_result =
+                self.consume_block_match(current_rx, current_node, current_bookmark, parent_node)?;
 
             match (match_result, match_type.clone()) {
                 (MatchResult::State(state), MatchType::Mandatory) => {
@@ -397,10 +386,9 @@ impl<'a> Validator<'a> {
                         None => None,
                     };
                     if let Some(ref node) = current_node {
-                        if node.get_id() == current_node_id
-                            {
-                                break;
-                            }
+                        if node.get_id() == current_node_id {
+                            break;
+                        }
                     } else {
                         break;
                     }
@@ -930,7 +918,9 @@ impl<'a> Validator<'a> {
                     self.validate_sibling_inlines(rx, node)
                 }
             }
-            _ => Err(HowserError::RuntimeError("validate_link_node_content called with non-link node".to_string()))
+            _ => Err(HowserError::RuntimeError(
+                "validate_link_node_content called with non-link node".to_string(),
+            )),
         }
     }
 
@@ -943,9 +933,13 @@ impl<'a> Validator<'a> {
         rx: &Node,
     ) -> HowserResult<Option<ValidationProblem>> {
         let (node_content, rx_content) = match (node, rx) {
-            (Node::Text(ref node_text), Node::Text(ref rx_text))=> (node_text.get_content()?, rx_text.get_content()?),
-            (Node::Code(ref node_code), Node::Code(ref rx_code)) => (node_code.get_content()?, rx_code.get_content()?),
-            _ => (String::new(), String::new())
+            (Node::Text(ref node_text), Node::Text(ref rx_text)) => {
+                (node_text.get_content()?, rx_text.get_content()?)
+            }
+            (Node::Code(ref node_code), Node::Code(ref rx_code)) => {
+                (node_code.get_content()?, rx_code.get_content()?)
+            }
+            _ => (String::new(), String::new()),
         };
         let match_pairs = Self::check_content_match(&node_content, &rx_content)?;
 
@@ -1134,7 +1128,7 @@ pub fn types_match(node: &Node, other: &Node) -> HowserResult<bool> {
                     debug!("types_match:: Heading level mismatch");
                     return Ok(false);
                 }
-            },
+            }
             (Node::List(ref node_list), Node::List(ref rx_list)) => {
                 let node_list_type = node_list.get_list_type()?;
                 let rx_list_type = rx_list.get_list_type()?;
@@ -1145,7 +1139,7 @@ pub fn types_match(node: &Node, other: &Node) -> HowserResult<bool> {
                     debug!("types_match:: List type mismatch");
                     return Ok(false);
                 }
-            },
+            }
             _ => {
                 info!("types_match:: Match!");
                 return Ok(true);

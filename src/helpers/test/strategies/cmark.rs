@@ -116,7 +116,9 @@ pub fn container_block_match() -> BoxedStrategy<(
                         }
                         for child in child_matches {
                             match child {
-                                MatchType::Pair(pair) => append_to(&mut doc_container, vec![pair.doc]),
+                                MatchType::Pair(pair) => {
+                                    append_to(&mut doc_container, vec![pair.doc])
+                                }
                                 MatchType::Repeatable(ditto) => {
                                     append_to(&mut doc_container, ditto.matches)
                                 }
@@ -150,7 +152,10 @@ pub fn container_block_match() -> BoxedStrategy<(
                                 append_to(&mut doc_container, vec![match_pair.doc]);
                             }
                             MatchType::Repeatable(ditto_match) => {
-                                append_to(&mut rx_container, vec![ditto_match.rx, ditto_match.ditto]);
+                                append_to(
+                                    &mut rx_container,
+                                    vec![ditto_match.rx, ditto_match.ditto],
+                                );
                                 append_to(&mut doc_container, ditto_match.matches);
                             }
                         }
@@ -194,7 +199,10 @@ pub fn container_block_match() -> BoxedStrategy<(
                                 append_to(&mut doc_container, vec![match_pair.doc]);
                             }
                             MatchType::Repeatable(ditto_match) => {
-                                append_to(&mut rx_container, vec![ditto_match.rx, ditto_match.ditto]);
+                                append_to(
+                                    &mut rx_container,
+                                    vec![ditto_match.rx, ditto_match.ditto],
+                                );
                                 append_to(&mut doc_container, ditto_match.matches);
                             }
                         }
@@ -244,7 +252,9 @@ pub fn container_block_match() -> BoxedStrategy<(
 
                         for child in child_matches {
                             match child {
-                                MatchType::Pair(pair) => append_to(&mut doc_container, vec![pair.doc]),
+                                MatchType::Pair(pair) => {
+                                    append_to(&mut doc_container, vec![pair.doc])
+                                }
                                 MatchType::Repeatable(ditto) => {
                                     append_to(&mut doc_container, ditto.matches);
                                 }
@@ -278,7 +288,10 @@ pub fn container_block_match() -> BoxedStrategy<(
                                 append_to(&mut doc_container, vec![match_pair.doc]);
                             }
                             MatchType::Repeatable(ditto_match) => {
-                                append_to(&mut rx_container, vec![ditto_match.rx, ditto_match.ditto]);
+                                append_to(
+                                    &mut rx_container,
+                                    vec![ditto_match.rx, ditto_match.ditto],
+                                );
                                 append_to(&mut doc_container, ditto_match.matches);
                             }
                         }
@@ -412,7 +425,7 @@ fn node_of_type(node_type: NodeType, annotation: Option<PromptToken>) -> Node {
         match node {
             Node::Heading(_) | Node::Paragraph(_) => {
                 append_to(&mut node, vec![text_node(&token.to_string())])
-            },
+            }
             _ => unimplemented!(),
         }
     }

@@ -1,3 +1,7 @@
+extern crate assert_cli;
+extern crate env_logger;
+extern crate howser;
+extern crate tempfile;
 /// Integration test suite for the Pharmacy File Feature
 ///
 /// Excerpts from the requirements doc are used here to give context the the suite and individual
@@ -13,14 +17,10 @@
 ///     * **And** the pharmacy file contains a toml section labeled "Specs"
 ///     * **And** for each prescription file there exists a toml key-value pair in the "Specs" section of the pharmacy file with Rx spec filename as key and markdown filename as value
 extern crate toml;
-extern crate howser;
-extern crate assert_cli;
-extern crate tempfile;
-extern crate env_logger;
 
 mod fixtures;
 
-use assert_cli::{Assert};
+use assert_cli::Assert;
 use fixtures::PharmacyFixture;
 
 /// * ##### Getting help info on the pharmacy subcommand
@@ -32,7 +32,8 @@ fn test_pharmacy_subcommand_help() {
     Assert::main_binary()
         .fails()
         .and()
-        .stderr().contains("pharmacy")
+        .stderr()
+        .contains("pharmacy")
         .unwrap();
 }
 
@@ -65,7 +66,8 @@ fn test_pharmacy_validate_subcommand_help() {
         .with_args(&["pharmacy", "validate"])
         .fails()
         .and()
-        .stderr().contains("<PHARMACY>    The .toml file containing the documents to process.")
+        .stderr()
+        .contains("<PHARMACY>    The .toml file containing the documents to process.")
         .unwrap();
 }
 
@@ -81,7 +83,8 @@ fn test_pharmacy_check_subcommand_help() {
         .with_args(&["pharmacy", "check"])
         .fails()
         .and()
-        .stderr().contains("<PHARMACY>    The .toml file containing the documents to process.")
+        .stderr()
+        .contains("<PHARMACY>    The .toml file containing the documents to process.")
         .unwrap();
 }
 
@@ -101,9 +104,12 @@ fn test_pharmacy_validate_failure() {
 
     Assert::main_binary()
         .with_args(&["pharmacy", "validate", pharmacy.get_path()])
-        .stdout().satisfies(move |out| {
-        out.to_string().matches("Error").count() == failure_count
-    }, "Wrong number of error messages").unwrap();
+        .stdout()
+        .satisfies(
+            move |out| out.to_string().matches("Error").count() == failure_count,
+            "Wrong number of error messages",
+        )
+        .unwrap();
 }
 
 /// * ##### Fail Early Option when validating
@@ -121,9 +127,12 @@ fn test_pharmacy_validate_fail_early() {
 
     Assert::main_binary()
         .with_args(&["pharmacy", "validate", "--fail-early", pharmacy.get_path()])
-        .stdout().satisfies(move |out| {
-        out.to_string().matches("Error").count() == 1
-    }, "Wrong number of error messages").unwrap();
+        .stdout()
+        .satisfies(
+            move |out| out.to_string().matches("Error").count() == 1,
+            "Wrong number of error messages",
+        )
+        .unwrap();
 }
 
 /// * ##### Success Message when validating
@@ -139,7 +148,8 @@ fn test_pharmacy_validate_success() {
 
     Assert::main_binary()
         .with_args(&["pharmacy", "validate", pharmacy.get_path()])
-        .stdout().contains("Valid")
+        .stdout()
+        .contains("Valid")
         .unwrap();
 }
 
@@ -160,7 +170,8 @@ fn test_pharmacy_validate_fails_when_missing_prescription() {
         .with_args(&["pharmacy", "validate", pharmacy.get_path()])
         .fails()
         .and()
-        .stdout().contains("entity not found")
+        .stdout()
+        .contains("entity not found")
         .unwrap();
 }
 
@@ -181,6 +192,7 @@ fn test_pharmacy_validate_fails_when_missing_document() {
         .with_args(&["pharmacy", "validate", pharmacy.get_path()])
         .fails()
         .and()
-        .stdout().contains("entity not found")
+        .stdout()
+        .contains("entity not found")
         .unwrap();
 }

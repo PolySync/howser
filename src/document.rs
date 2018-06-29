@@ -8,9 +8,7 @@ use constants::{DITTO_TOKEN, MANDATORY_PROMPT, OPTIONAL_PROMPT, PROMPT_PATTERN};
 use data::ElementType;
 use data::{MatchType, NodeData};
 use doogie::constants::*;
-use doogie::{
-    Node,
-};
+use doogie::Node;
 use errors::{HowserError, HowserResult, SpecWarning};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -144,12 +142,12 @@ fn process_child_inline_elements(parent: &Node, document: &Document) -> HowserRe
                 if all_content_is_optional(&text.get_content()?)? {
                     document.set_match_type(&node, MatchType::Optional)?;
                 }
-            },
+            }
             Node::Code(ref code) => {
                 if all_content_is_optional(&code.get_content()?)? {
                     document.set_match_type(&node, MatchType::Optional)?;
                 }
-            },
+            }
             _ => {
                 process_child_inline_elements(&node, document)?;
                 annotate_circumstantial_node(&node, document)?;
@@ -180,8 +178,7 @@ fn process_child_block_elements(parent: &Node, document: &Document) -> HowserRes
     while let Some(l1_node) = current_child {
         let mut l2 = LookaheadType::Other(None);
 
-        if let Some(l2_node) = l1_node.next_sibling()?
-        {
+        if let Some(l2_node) = l1_node.next_sibling()? {
             if types_match(&l1_node, &l2_node)? {
                 l2 = LookaheadType::new(Some(l2_node))?;
             } else {
@@ -312,8 +309,7 @@ fn process_child_block_elements(parent: &Node, document: &Document) -> HowserRes
 /// Returns None if the element is not annotated.
 fn get_annotation(node: &Node) -> HowserResult<MatchType> {
     trace!("document::get_annotation");
-    match node
-    {
+    match node {
         Node::Paragraph(_) => get_paragraph_annotation(node),
         Node::BlockQuote(_) => get_block_quote_annotation(node),
         Node::CodeBlock(_) => get_code_block_annotation(node),
@@ -326,8 +322,7 @@ fn get_annotation(node: &Node) -> HowserResult<MatchType> {
 /// Strips the annotation from a block level element if one exists.
 fn remove_annotation(node: &mut Node) -> HowserResult<()> {
     trace!("remove_annotation()");
-    match node
-    {
+    match node {
         Node::Paragraph(_) => remove_paragraph_annotation(node),
         Node::BlockQuote(_) => remove_block_quote_annotation(node),
         Node::CodeBlock(_) => remove_code_block_annotation(node),
@@ -350,8 +345,8 @@ fn get_paragraph_annotation(node: &Node) -> HowserResult<MatchType> {
                         return Ok(token);
                     }
                 }
-            },
-            _ => ()
+            }
+            _ => (),
         }
     }
 
@@ -366,7 +361,7 @@ fn remove_paragraph_annotation(node: &mut Node) -> HowserResult<()> {
             Some(Node::SoftBreak(_)) | None => {
                 let match_result = match text_node {
                     Node::Text(ref text) => extract_match_type(&text.get_content()?)?,
-                    _ => (MatchType::None, String::new())
+                    _ => (MatchType::None, String::new()),
                 };
                 let (token, remainder) = match_result;
                 if token != MatchType::None && remainder.is_empty() {
@@ -375,8 +370,8 @@ fn remove_paragraph_annotation(node: &mut Node) -> HowserResult<()> {
                         node.unlink();
                     }
                 }
-            },
-            _ => ()
+            }
+            _ => (),
         }
     }
 
@@ -385,8 +380,7 @@ fn remove_paragraph_annotation(node: &mut Node) -> HowserResult<()> {
 
 /// Returns the block-level annotation from a block quote node if one exists.
 fn get_block_quote_annotation(node: &Node) -> HowserResult<MatchType> {
-    if let Some(paragraph_node @ Node::Paragraph(_)) = node.first_child()?
-    {
+    if let Some(paragraph_node @ Node::Paragraph(_)) = node.first_child()? {
         get_paragraph_annotation(&paragraph_node)
     } else {
         Ok(MatchType::None)
@@ -450,7 +444,7 @@ fn remove_heading_annotation(heading_node: &Node) -> HowserResult<()> {
     if let Some(mut text_node @ Node::Text(_)) = heading_node.first_child()? {
         let match_result = match text_node {
             Node::Text(ref text) => extract_match_type(&text.get_content()?)?,
-            _ => (MatchType::None, String::new())
+            _ => (MatchType::None, String::new()),
         };
         if text_node.next_sibling()?.is_none() {
             let (match_type, content) = match_result;
@@ -535,10 +529,8 @@ fn extract_match_type(content: &String) -> HowserResult<(MatchType, String)> {
 
 /// Strips all html from the document.
 fn strip_comments(root: &Node) -> HowserResult<()> {
-    for (mut node, _) in root.iter()
-    {
-        match node
-        {
+    for (mut node, _) in root.iter() {
+        match node {
             Node::HtmlInline(_) | Node::HtmlBlock(_) => {
                 node.unlink();
             }
@@ -582,31 +574,29 @@ impl LookaheadType {
             let match_type = get_annotation(&node)?;
             debug!("LookaheadType::new: MatchType: {:?}", match_type);
             match node {
-                    // List
-                    Node::List(_) => Ok(LookaheadType::List(node)),
-                    // Integrated
-                    Node::Paragraph(_)
-                    | Node::BlockQuote(_)
-                    | Node::CodeBlock(_) => match match_type {
-                        MatchType::Repeatable => Ok(LookaheadType::Ditto(node)),
-                        MatchType::None => Ok(LookaheadType::IntegratedLiteral(node)),
-                        _ => {
-                            if LookaheadType::is_vacant(&node)? {
-                                Ok(LookaheadType::IntegratedVacant(node, match_type))
-                            } else {
-                                Ok(LookaheadType::IntegratedOccupied(node, match_type))
-                            }
+                // List
+                Node::List(_) => Ok(LookaheadType::List(node)),
+                // Integrated
+                Node::Paragraph(_) | Node::BlockQuote(_) | Node::CodeBlock(_) => match match_type {
+                    MatchType::Repeatable => Ok(LookaheadType::Ditto(node)),
+                    MatchType::None => Ok(LookaheadType::IntegratedLiteral(node)),
+                    _ => {
+                        if LookaheadType::is_vacant(&node)? {
+                            Ok(LookaheadType::IntegratedVacant(node, match_type))
+                        } else {
+                            Ok(LookaheadType::IntegratedOccupied(node, match_type))
                         }
-                    },
-                    // Discrete
-                    Node::Heading(_) | Node::Item(_) => match match_type {
-                        MatchType::Repeatable => Ok(LookaheadType::Ditto(node)),
-                        MatchType::None => Ok(LookaheadType::DiscreteLiteral(node)),
-                        _ => Ok(LookaheadType::DiscreteAnnotated(node, match_type)),
-                    },
-                    // Other
-                    _ => Ok(LookaheadType::Other(Some(node))),
-                }
+                    }
+                },
+                // Discrete
+                Node::Heading(_) | Node::Item(_) => match match_type {
+                    MatchType::Repeatable => Ok(LookaheadType::Ditto(node)),
+                    MatchType::None => Ok(LookaheadType::DiscreteLiteral(node)),
+                    _ => Ok(LookaheadType::DiscreteAnnotated(node, match_type)),
+                },
+                // Other
+                _ => Ok(LookaheadType::Other(Some(node))),
+            }
         } else {
             Ok(LookaheadType::Other(None))
         }
@@ -617,12 +607,11 @@ impl LookaheadType {
         match node {
             Node::CodeBlock(ref code_block) => Ok(code_block.get_content()?.is_empty()),
             _ => {
-                if let Some(annotation) = node.first_child()?
-                    {
-                        Ok(annotation.next_sibling()?.is_none())
-                    } else {
-                        Err(HowserError::RuntimeError(
-                            "Lookahead Error: Got a match type, but no annotation node was present."
+                if let Some(annotation) = node.first_child()? {
+                    Ok(annotation.next_sibling()?.is_none())
+                } else {
+                    Err(HowserError::RuntimeError(
+                        "Lookahead Error: Got a match type, but no annotation node was present."
                             .to_string(),
                     ))
                 }
@@ -636,10 +625,7 @@ mod tests {
     use super::process_child_block_elements;
     use super::Document;
     use data::{MatchType, PromptToken};
-    use doogie::{
-        parse_document,
-        Node
-    };
+    use doogie::{parse_document, Node};
     use helpers::test::strategies::cmark::arb_paragraph_match;
     use helpers::test::strategies::helpers::serialize_match_seq;
     use proptest::prelude::*;
