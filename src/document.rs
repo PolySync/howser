@@ -66,33 +66,29 @@ impl<'a> Document<'a> {
     }
 
     /// Set the `MatchType` for a `Node`.
-    fn set_match_type(&self, node: &Node, match_type: MatchType) -> Result<&Self, HowserError> {
+    fn set_match_type(&self, node: &Node, match_type: MatchType) {
         trace!("set_match_type()");
         let id = node.get_id();
         let mut data = self.data.borrow_mut();
         let node_data = data.entry(id).or_insert(NodeData::new());
         node_data.match_type = match_type;
-
-        Ok(self)
     }
 
     /// Returns a boolean indicating if this `Node` is considered a wildcard.
-    pub fn is_wildcard(&self, rx_node: &Node) -> HowserResult<bool> {
+    pub fn is_wildcard(&self, rx_node: &Node) -> bool {
         let id = rx_node.get_id();
         let mut data_store = self.data.borrow_mut();
         let node_data = data_store.entry(id).or_insert(NodeData::new());
-        Ok(node_data.is_wildcard)
+        node_data.is_wildcard
     }
 
     /// Set the wildcard status for a `Node`.
-    fn set_is_wildcard(&self, node: &Node, state: bool) -> HowserResult<()> {
+    fn set_is_wildcard(&self, node: &Node, state: bool) {
         trace!("set_is_wildcard()");
         let id = node.get_id();
         let mut data = self.data.borrow_mut();
         let node_data = data.entry(id).or_insert(NodeData::new());
         node_data.is_wildcard = state;
-
-        Ok(())
     }
 
     /// Infers the line number of the given node.
@@ -140,12 +136,12 @@ fn process_child_inline_elements(parent: &Node, document: &Document) -> HowserRe
         match node {
             Node::Text(ref text) => {
                 if all_content_is_optional(&text.get_content()?)? {
-                    document.set_match_type(&node, MatchType::Optional)?;
+                    document.set_match_type(&node, MatchType::Optional);
                 }
             }
             Node::Code(ref code) => {
                 if all_content_is_optional(&code.get_content()?)? {
-                    document.set_match_type(&node, MatchType::Optional)?;
+                    document.set_match_type(&node, MatchType::Optional);
                 }
             }
             _ => {
@@ -197,7 +193,7 @@ fn process_child_block_elements(parent: &Node, document: &Document) -> HowserRes
                 LookaheadType::Ditto(ditto),
             ) => {
                 process_child_elements(&target, document)?;
-                document.set_match_type(&ditto, MatchType::Repeatable)?;
+                document.set_match_type(&ditto, MatchType::Repeatable);
                 current_child = ditto.next_sibling()?;
             },
             (
@@ -211,7 +207,7 @@ fn process_child_block_elements(parent: &Node, document: &Document) -> HowserRes
                 LookaheadType::DiscreteAnnotated(mut annotation, match_type),
                 LookaheadType::DiscreteLiteral(target),
             ) => {
-                document.set_match_type(&target, match_type)?;
+                document.set_match_type(&target, match_type);
                 annotation.unlink();
                 current_child = Some(target);
             },
@@ -220,17 +216,17 @@ fn process_child_block_elements(parent: &Node, document: &Document) -> HowserRes
                 LookaheadType::Ditto(ditto),
             ) => {
                 remove_annotation(&mut target)?;
-                document.set_match_type(&target, match_type)?;
-                document.set_is_wildcard(&target, true)?;
-                document.set_match_type(&ditto, MatchType::Repeatable)?;
+                document.set_match_type(&target, match_type);
+                document.set_is_wildcard(&target, true);
+                document.set_match_type(&ditto, MatchType::Repeatable);
                 current_child = ditto.next_sibling()?;
             },
             (
                 LookaheadType::DiscreteAnnotated(target, match_type),
                 _,
             ) => {
-                document.set_match_type(&target, match_type)?;
-                document.set_is_wildcard(&target, true)?;
+                document.set_match_type(&target, match_type);
+                document.set_is_wildcard(&target, true);
                 current_child = target.next_sibling()?;
             },
             (
@@ -238,7 +234,7 @@ fn process_child_block_elements(parent: &Node, document: &Document) -> HowserRes
                 LookaheadType::Ditto(ditto),
             ) => {
                 process_child_elements(&target, document)?;
-                document.set_match_type(&ditto, MatchType::Repeatable)?;
+                document.set_match_type(&ditto, MatchType::Repeatable);
                 current_child = ditto.next_sibling()?;
             },
             (
@@ -253,9 +249,9 @@ fn process_child_block_elements(parent: &Node, document: &Document) -> HowserRes
                 LookaheadType::Ditto(ditto),
             ) => {
                 remove_annotation(&mut target)?;
-                document.set_match_type(&target, match_type)?;
-                document.set_match_type(&ditto, MatchType::Repeatable)?;
-                document.set_is_wildcard(&target, true)?;
+                document.set_match_type(&target, match_type);
+                document.set_match_type(&ditto, MatchType::Repeatable);
+                document.set_is_wildcard(&target, true);
                 current_child = ditto.next_sibling()?;
             },
             (
@@ -263,8 +259,8 @@ fn process_child_block_elements(parent: &Node, document: &Document) -> HowserRes
                 _,
             ) => {
                 remove_annotation(&mut target)?;
-                document.set_match_type(&target, match_type)?;
-                document.set_is_wildcard(&target, true)?;
+                document.set_match_type(&target, match_type);
+                document.set_is_wildcard(&target, true);
                 current_child = target.next_sibling()?;
             },
             (
@@ -273,8 +269,8 @@ fn process_child_block_elements(parent: &Node, document: &Document) -> HowserRes
             ) => {
                 process_child_elements(&target, document)?;
                 remove_annotation(&mut target)?;
-                document.set_match_type(&target, match_type)?;
-                document.set_match_type(&ditto, MatchType::Repeatable)?;
+                document.set_match_type(&target, match_type);
+                document.set_match_type(&ditto, MatchType::Repeatable);
                 current_child = ditto.next_sibling()?;
             },
             (
@@ -283,7 +279,7 @@ fn process_child_block_elements(parent: &Node, document: &Document) -> HowserRes
             ) => {
                 process_child_elements(&target, document)?;
                 remove_annotation(&mut target)?;
-                document.set_match_type(&target, match_type)?;
+                document.set_match_type(&target, match_type);
                 current_child = target.next_sibling()?;
             },
             (
@@ -485,11 +481,11 @@ fn remove_item_annotation(item_node: &Node) -> HowserResult<()> {
 /// This is necessary because lists nodes are meta-nodes in cmark and will only appear as containers
 /// for list items if they are present.
 fn annotate_circumstantial_node(target_node: &Node, document: &Document) -> HowserResult<()> {
-    document.set_match_type(target_node, MatchType::Optional)?;
+    document.set_match_type(target_node, MatchType::Optional);
     let mut child = target_node.first_child()?;
     while let Some(node) = child {
         if document.get_match_type(&node)? == MatchType::Mandatory {
-            document.set_match_type(&target_node, MatchType::Mandatory)?;
+            document.set_match_type(&target_node, MatchType::Mandatory);
             return Ok(());
         } else {
             child = node.next_sibling()?;

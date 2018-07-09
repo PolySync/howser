@@ -848,7 +848,7 @@ impl<'a> Validator<'a> {
     /// Determines if the given prescription `Node` is a wildcard.
     fn node_is_wildcard(&self, rx: &Node) -> HowserResult<bool> {
         trace!("node_is_wildcard()");
-        match self.prescription.document.is_wildcard(rx)? {
+        match self.prescription.document.is_wildcard(rx) {
             true => {
                 info!("Wildcard!");
                 Ok(true)
