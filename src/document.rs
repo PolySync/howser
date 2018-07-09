@@ -425,8 +425,6 @@ fn get_heading_annotation(heading_node: &Node) -> HowserResult<MatchType> {
                 let (match_type, content) = extract_match_type(&text.get_content()?)?;
                 if match_type != MatchType::None && content.is_empty() {
                     return Ok(match_type);
-                } else {
-                    return Ok(MatchType::None);
                 }
             }
         }
@@ -648,7 +646,7 @@ mod tests {
                     PromptToken::Optional => assert_eq!(match_type, MatchType::Optional),
                     _ => ()
                 }
-                assert!(! document.is_wildcard(&paragraph_node).unwrap());
+                assert!(! document.is_wildcard(&paragraph_node));
                 if let Some(Node::Text(ref text)) = paragraph_node.first_child().unwrap() {
                     let processed_content = text.get_content().unwrap();
                     assert_eq!(processed_content, template_content);
@@ -675,7 +673,7 @@ mod tests {
                     PromptToken::Optional => assert_eq!(match_type, MatchType::Optional),
                     _ => ()
                 }
-                assert!(document.is_wildcard(&paragraph).unwrap());
+                assert!(document.is_wildcard(&paragraph));
                 assert!(paragraph.first_child().unwrap().is_none());
             } else {
                 panic!("No paragraph node found");
@@ -692,7 +690,7 @@ mod tests {
 
             if let Some(paragraph_node) = document.root.first_child().unwrap() {
                 assert_eq!(document.get_match_type(&paragraph_node).unwrap(), MatchType::Mandatory);
-                assert!(! document.is_wildcard(&paragraph_node).unwrap());
+                assert!(! document.is_wildcard(&paragraph_node));
                 if let Some(Node::Text(ref text)) = paragraph_node.first_child().unwrap() {
                     let processed_content = text.get_content().unwrap();
                     assert_eq!(processed_content, template_content);
@@ -717,7 +715,7 @@ mod tests {
 
             if let Some(paragraph @ Node::Paragraph(_)) = document.root.first_child().expect("No Paragraph Node found") {
                 assert_eq!(document.get_match_type(&paragraph).unwrap(), MatchType::Mandatory);
-                assert!(! document.is_wildcard(&paragraph).unwrap());
+                assert!(! document.is_wildcard(&paragraph));
 
                 if let Some(Node::Text(ref text)) = paragraph.first_child().expect("No Text Node found") {
                     let processed_content = text.get_content().unwrap();
