@@ -419,14 +419,17 @@ fn remove_code_block_annotation(node: &mut Node) -> HowserResult<()> {
 
 /// Returns the block-level annotation of a heading node if one exists.
 fn get_heading_annotation(heading_node: &Node) -> HowserResult<MatchType> {
-    if let Some(text_node) = heading_node.first_child()? {
-        if let Node::Text(ref text) = text_node {
-            if text_node.next_sibling()?.is_none() {
-                let (match_type, content) = extract_match_type(&text.get_content()?)?;
-                if match_type != MatchType::None && content.is_empty() {
-                    return Ok(match_type);
-                }
-            }
+    let text_node = match heading_node.first_child()? {
+        Some(node) => node,
+        None => return Ok(MatchType::None)
+    };
+    if text_node.next_sibling()?.is_some() {
+        return Ok(MatchType::None);
+    }
+    if let Node::Text(ref text) = text_node {
+        let (match_type, content) = extract_match_type(&text.get_content()?)?;
+        if match_type != MatchType::None && content.is_empty() {
+            return Ok(match_type);
         }
     }
 
