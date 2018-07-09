@@ -710,7 +710,7 @@ impl<'a> Validator<'a> {
     /// Inputs are assumed to be block elements.
     fn check_block_match(&self, node: &Node, rx: &Node) -> HowserResult<Option<ValidationProblem>> {
         trace!("check_block_match::");
-        match ElementType::determine(rx)? {
+        match ElementType::determine(rx) {
             ElementType::ContainerBlock => Ok(self.check_container_block_match(&node, &rx)?),
             ElementType::LeafBlock => Ok(self.check_leaf_block_match(&node, &rx)?),
             _ => {
@@ -792,7 +792,7 @@ impl<'a> Validator<'a> {
         node: &Node,
     ) -> HowserResult<Option<ValidationProblem>> {
         trace!("check_inline_match::");
-        match ElementType::determine(rx)? {
+        match ElementType::determine(rx) {
             ElementType::InlineLeaf => self.check_inline_leaf_match(node, rx),
             ElementType::InlineContainer => self.check_inline_container_match(node, rx),
             _ => {

@@ -121,7 +121,7 @@ fn process_child_elements(parent: &Node, document: &Document) -> HowserResult<()
     let child = parent.first_child()?;
 
     if let Some(ref node) = child {
-        match ElementType::determine(node)? {
+        match ElementType::determine(node) {
             ElementType::InlineContainer | ElementType::InlineLeaf => {
                 process_child_inline_elements(parent, document)
             }
