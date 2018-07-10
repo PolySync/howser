@@ -9,11 +9,10 @@ use constants::{CONTENT_PROMPT_PATTERN, MANDATORY_PROMPT, OPTIONAL_PROMPT};
 use data::ElementType;
 use data::{ContentMatchPair, MatchType, PromptToken};
 use document::{Document, Prescription};
-use doogie::constants::NodeType;
 use doogie::Node;
 use errors::{
-    DocumentError, HowserError, HowserResult, Reportable, SpecWarning, TextualContentError,
-    TypeMismatchError, ValidationProblem,
+    DocumentError, HowserError, HowserResult, Reportable, TextualContentError, TypeMismatchError,
+    ValidationProblem,
 };
 use std::collections::VecDeque;
 
@@ -87,35 +86,57 @@ impl<'a> Validator<'a> {
         parent_doc_node: &Node,
     ) -> HowserResult<Option<ValidationProblem>> {
         trace!("validate_sibling_blocks::");
-        let parent_rx_traverser = parent_rx_node
-            .capabilities
-            .traverse
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?;
-        let parent_node_traverser = parent_doc_node
-            .capabilities
-            .traverse
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?;
-        let mut current_rx = parent_rx_traverser.last_child()?;
-        let mut current_node = parent_node_traverser.last_child()?;
-        let mut current_bookmark = parent_node_traverser.last_child()?;
+        let mut current_rx = parent_rx_node.first_child()?;
+        let mut current_node = parent_doc_node.first_child()?;
+        let mut current_bookmark = parent_doc_node.first_child()?;
 
         while let Some(rx) = current_rx {
-            match self.consume_block_match(rx, current_node, current_bookmark, parent_doc_node)? {
-                MatchResult::State(state) => {
-                    let MatchState {
-                        rx,
-                        node,
-                        bookmark: new_bookmark,
-                    } = state;
-
-                    current_rx = rx;
-                    current_node = node;
-                    current_bookmark = new_bookmark;
+            let is_repeatable = match rx.next_sibling()? {
+                Some(next_rx) => {
+                    self.prescription.document.get_match_type(&next_rx)? == MatchType::Repeatable
                 }
-                MatchResult::Error(errors) => {
-                    return Ok(Some(errors));
+                _ => false,
+            };
+
+            if is_repeatable {
+                match self.consume_repeatable_matches(
+                    rx,
+                    current_node,
+                    current_bookmark,
+                    parent_doc_node,
+                )? {
+                    MatchResult::State(state) => {
+                        let MatchState {
+                            rx,
+                            node,
+                            bookmark: new_bookmark,
+                        } = state;
+
+                        current_rx = rx;
+                        current_node = node;
+                        current_bookmark = new_bookmark;
+                    }
+                    MatchResult::Error(errors) => {
+                        return Ok(Some(errors));
+                    }
+                }
+            } else {
+                match self.consume_block_match(rx, current_node, current_bookmark, parent_doc_node)?
+                {
+                    MatchResult::State(state) => {
+                        let MatchState {
+                            rx,
+                            node,
+                            bookmark: new_bookmark,
+                        } = state;
+
+                        current_rx = rx;
+                        current_node = node;
+                        current_bookmark = new_bookmark;
+                    }
+                    MatchResult::Error(errors) => {
+                        return Ok(Some(errors));
+                    }
                 }
             }
         }
@@ -145,20 +166,9 @@ impl<'a> Validator<'a> {
         parent_node: &Node,
     ) -> HowserResult<Option<ValidationProblem>> {
         trace!("validate_sibling_inlines::");
-        let parent_rx_traverser = parent_rx
-            .capabilities
-            .traverse
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?;
-        let parent_node_traverser = parent_node
-            .capabilities
-            .traverse
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?;
-
-        let mut current_rx = parent_rx_traverser.first_child()?;
-        let mut current_node = parent_node_traverser.first_child()?;
-        let mut current_bookmark = parent_node_traverser.first_child()?;
+        let mut current_rx = parent_rx.first_child()?;
+        let mut current_node = parent_node.first_child()?;
+        let mut current_bookmark = parent_node.first_child()?;
 
         while let Some(rx) = current_rx {
             match self.consume_inline_match(rx, current_node, current_bookmark, parent_node)? {
@@ -208,20 +218,12 @@ impl<'a> Validator<'a> {
         parent_node: &Node,
     ) -> HowserResult<MatchResult> {
         trace!("consume_block_match::");
-        info!(
-            "Rx: {}",
-            rx.capabilities.render.as_ref().unwrap().render_xml()
-        );
+        info!("Rx: {}", rx.render_xml());
         if let Some(ref node) = node {
-            info!(
-                "Doc: {}",
-                node.capabilities.render.as_ref().unwrap().render_xml()
-            );
+            info!("Doc: {}", node.render_xml());
         }
+
         match self.prescription.document.get_match_type(&rx)? {
-            MatchType::Repeatable => {
-                self.consume_repeatable_matches(rx, node, bookmark, parent_node)
-            }
             MatchType::Mandatory => {
                 if let Some(bookmark) = bookmark {
                     self.consume_mandatory_block_match(
@@ -243,8 +245,8 @@ impl<'a> Validator<'a> {
             MatchType::Optional => {
                 self.consume_optional_block_match(OptionalMatchInput { rx, node, bookmark })
             }
-            MatchType::None => {
-                warn!("Encountered MatchType::None");
+            _ => {
+                error!("Unexpected Matchtype encountered in consume_block_match");
                 Ok(MatchResult::State(MatchState {
                     rx: Some(rx),
                     node,
@@ -264,16 +266,10 @@ impl<'a> Validator<'a> {
         parent_node: &Node,
     ) -> HowserResult<MatchResult> {
         trace!("consume_inline_match::");
-        info!(
-            "Rx: {}",
-            rx.capabilities.render.as_ref().unwrap().render_xml()
-        );
+        info!("Rx: {}", rx.render_xml());
 
         if let Some(ref node) = node {
-            info!(
-                "Doc: {}",
-                node.capabilities.render.as_ref().unwrap().render_xml()
-            );
+            info!("Doc: {}", node.render_xml());
         }
 
         match self.prescription.document.get_match_type(&rx)? {
@@ -314,196 +310,115 @@ impl<'a> Validator<'a> {
         parent_node: &Node,
     ) -> HowserResult<MatchResult> {
         trace!("consume_repeatable_matches()");
-        if let Some(repeatable_rx) = rx.capabilities
-            .traverse
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?
-            .prev_sibling()?
-        {
-            let out_rx = repeatable_rx
-                .capabilities
-                .traverse
-                .as_ref()
-                .ok_or(HowserError::CapabilityError)?
-                .prev_sibling()?;
-            let mut out_node = match node {
-                Some(ref node) => Some(node.capabilities
-                    .traverse
-                    .as_ref()
-                    .ok_or(HowserError::CapabilityError)?
-                    .itself()?),
-                None => None,
-            };
-            let mut out_bookmark = match bookmark {
-                Some(ref node) => Some(node.capabilities
-                    .traverse
-                    .as_ref()
-                    .ok_or(HowserError::CapabilityError)?
-                    .itself()?),
-                None => None,
-            };
-            let mut current_rx = repeatable_rx
-                .capabilities
-                .traverse
-                .as_ref()
-                .ok_or(HowserError::CapabilityError)?
-                .itself()?;
-            let mut current_node = match node {
-                Some(ref node) => Some(node.capabilities
-                    .traverse
-                    .as_ref()
-                    .ok_or(HowserError::CapabilityError)?
-                    .itself()?),
-                None => None,
-            };
-            let mut current_bookmark = match bookmark {
-                Some(ref node) => Some(node.capabilities
-                    .traverse
-                    .as_ref()
-                    .ok_or(HowserError::CapabilityError)?
-                    .itself()?),
-                None => None,
-            };
-            let match_type = self.prescription.document.get_match_type(&repeatable_rx)?;
-            let mut matches_consumed: usize = 0;
+        let out_rx = match rx.next_sibling()? {
+            Some(ditto_node) => ditto_node.next_sibling()?,
+            _ => None,
+        };
+        let mut out_node = match node {
+            Some(ref node) => Some(node.itself()?),
+            None => None,
+        };
+        let mut out_bookmark = match bookmark {
+            Some(ref node) => Some(node.itself()?),
+            None => None,
+        };
+        let mut current_rx = rx.itself()?;
+        let mut current_node = match node {
+            Some(ref node) => Some(node.itself()?),
+            None => None,
+        };
+        let mut current_bookmark = match bookmark {
+            Some(ref node) => Some(node.itself()?),
+            None => None,
+        };
+        let match_type = self.prescription.document.get_match_type(&rx)?;
+        let mut matches_consumed: usize = 0;
 
-            loop {
-                let current_node_id = match current_node {
-                    Some(ref node) => node.capabilities
-                        .get
-                        .as_ref()
-                        .ok_or(HowserError::CapabilityError)?
-                        .get_id()?,
-                    _ => 0,
-                };
-                let match_result = self.consume_block_match(
-                    current_rx,
-                    current_node,
-                    current_bookmark,
-                    parent_node,
-                )?;
+        loop {
+            let current_node_id = match current_node {
+                Some(ref node) => node.get_id(),
+                _ => 0,
+            };
+            let match_result =
+                self.consume_block_match(current_rx, current_node, current_bookmark, parent_node)?;
 
-                match (match_result, match_type.clone()) {
-                    (MatchResult::State(state), MatchType::Mandatory) => {
-                        let MatchState {
-                            rx: _,
-                            node: result_node,
-                            bookmark: result_bookmark,
-                        } = state;
+            match (match_result, match_type.clone()) {
+                (MatchResult::State(state), MatchType::Mandatory) => {
+                    let MatchState {
+                        rx: _,
+                        node: result_node,
+                        bookmark: result_bookmark,
+                    } = state;
 
-                        matches_consumed += 1;
-                        current_node = match result_node {
-                            Some(ref node) => Some(node.capabilities
-                                .traverse
-                                .as_ref()
-                                .ok_or(HowserError::CapabilityError)?
-                                .itself()?),
-                            None => None,
+                    matches_consumed += 1;
+                    current_node = match result_node {
+                        Some(ref node) => Some(node.itself()?),
+                        None => None,
+                    };
+                    current_rx = rx.itself()?;
+                    current_bookmark = result_bookmark;
+                    out_node = match result_node {
+                        Some(ref node) => Some(node.itself()?),
+                        None => None,
+                    };
+                    if matches_consumed == 1 {
+                        out_bookmark = match current_bookmark {
+                            Some(ref node) => Some(node.itself()?),
+                            _ => None,
                         };
-                        current_rx = repeatable_rx
-                            .capabilities
-                            .traverse
-                            .as_ref()
-                            .ok_or(HowserError::CapabilityError)?
-                            .itself()?;
-                        current_bookmark = result_bookmark;
-                        out_node = match result_node {
-                            Some(ref node) => Some(node.capabilities
-                                .traverse
-                                .as_ref()
-                                .ok_or(HowserError::CapabilityError)?
-                                .itself()?),
-                            None => None,
-                        };
-                        if matches_consumed == 1 {
-                            out_bookmark = match current_bookmark {
-                                Some(ref node) => Some(node.capabilities
-                                    .traverse
-                                    .as_ref()
-                                    .ok_or(HowserError::CapabilityError)?
-                                    .itself()?),
-                                _ => None,
-                            };
-                        }
                     }
-                    (MatchResult::State(state), MatchType::Optional) => {
-                        let MatchState {
-                            rx: _,
-                            node: result_node,
-                            bookmark: result_bookmark,
-                        } = state;
+                }
+                (MatchResult::State(state), MatchType::Optional) => {
+                    let MatchState {
+                        rx: _,
+                        node: result_node,
+                        bookmark: result_bookmark,
+                    } = state;
 
-                        current_node = match result_node {
-                            Some(ref node) => Some(node.capabilities
-                                .traverse
-                                .as_ref()
-                                .ok_or(HowserError::CapabilityError)?
-                                .itself()?),
-                            None => None,
-                        };
-                        current_rx = repeatable_rx
-                            .capabilities
-                            .traverse
-                            .as_ref()
-                            .ok_or(HowserError::CapabilityError)?
-                            .itself()?;
-                        current_bookmark = result_bookmark;
-                        out_node = match result_node {
-                            Some(ref node) => Some(node.capabilities
-                                .traverse
-                                .as_ref()
-                                .ok_or(HowserError::CapabilityError)?
-                                .itself()?),
-                            None => None,
-                        };
-                        if let Some(ref node) = current_node {
-                            if node.capabilities
-                                .get
-                                .as_ref()
-                                .ok_or(HowserError::CapabilityError)?
-                                .get_id()? == current_node_id
-                            {
-                                break;
-                            }
-                        } else {
+                    current_node = match result_node {
+                        Some(ref node) => Some(node.itself()?),
+                        None => None,
+                    };
+                    current_rx = rx.itself()?;
+                    current_bookmark = result_bookmark;
+                    out_node = match result_node {
+                        Some(ref node) => Some(node.itself()?),
+                        None => None,
+                    };
+                    if let Some(ref node) = current_node {
+                        if node.get_id() == current_node_id {
                             break;
                         }
-                    }
-                    (MatchResult::Error(err), MatchType::Mandatory) => {
-                        if matches_consumed == 0 {
-                            return Ok(MatchResult::Error(err));
-                        } else {
-                            break;
-                        }
-                    }
-                    (MatchResult::Error(_), MatchType::Optional) => {
+                    } else {
                         break;
                     }
-                    _ => {
-                        error!("consume_repeatable_matches:: Invalid match type encountered");
-                        return Err(HowserError::RuntimeError(
-                            "Error encountered processing repeatable match. Check the Howser log."
-                                .to_string(),
-                        ));
+                }
+                (MatchResult::Error(err), MatchType::Mandatory) => {
+                    if matches_consumed == 0 {
+                        return Ok(MatchResult::Error(err));
+                    } else {
+                        break;
                     }
-                };
-            }
-
-            info!("consume_repeatable_matches:: matches found or node was optional");
-            Ok(MatchResult::State(MatchState {
-                rx: out_rx,
-                node: out_node,
-                bookmark: out_bookmark,
-            }))
-        } else {
-            warn!("consume_repeatable_matches:: Rx Error -- No subject of ditto token");
-            let error = SpecWarning::new(
-                &rx,
-                &self.prescription.document,
-                "No valid subject for ditto token.",
-            )?;
-            Ok(MatchResult::Error(Box::new(error)))
+                }
+                (MatchResult::Error(_), MatchType::Optional) => {
+                    break;
+                }
+                _ => {
+                    error!("consume_repeatable_matches:: Invalid match type encountered");
+                    return Err(HowserError::RuntimeError(
+                        "Error encountered processing repeatable match. Check the Howser log."
+                            .to_string(),
+                    ));
+                }
+            };
         }
+
+        info!("consume_repeatable_matches:: matches found or node was optional");
+        Ok(MatchResult::State(MatchState {
+            rx: out_rx,
+            node: out_node,
+            bookmark: out_bookmark,
+        }))
     }
 
     /// Performs validation on a mandatory block element and returns the result.
@@ -518,30 +433,14 @@ impl<'a> Validator<'a> {
         if let Some(node) = node {
             match self.check_block_match(&node, &rx)? {
                 None => {
-                    let end_node = Some(node.capabilities
-                        .traverse
-                        .as_ref()
-                        .ok_or(HowserError::CapabilityError)?
-                        .itself()?);
+                    let end_node = Some(node.itself()?);
                     let next_bookmark = match self.scan_for_block_match(&bookmark, &end_node, &rx)?
                     {
-                        Some(node) => node.capabilities
-                            .traverse
-                            .as_ref()
-                            .ok_or(HowserError::CapabilityError)?
-                            .prev_sibling()?,
+                        Some(node) => node.next_sibling()?,
                         _ => None,
                     };
-                    let next_node = node.capabilities
-                        .traverse
-                        .as_ref()
-                        .ok_or(HowserError::CapabilityError)?
-                        .prev_sibling()?;
-                    let next_rx = rx.capabilities
-                        .traverse
-                        .as_ref()
-                        .ok_or(HowserError::CapabilityError)?
-                        .prev_sibling()?;
+                    let next_node = node.next_sibling()?;
+                    let next_rx = rx.next_sibling()?;
                     info!("consume_mandatory_block_match:: Block matched");
                     Ok(MatchResult::State(MatchState {
                         rx: next_rx,
@@ -550,25 +449,12 @@ impl<'a> Validator<'a> {
                     }))
                 }
                 Some(err) => {
-                    let end_node = Some(node.capabilities
-                        .traverse
-                        .as_ref()
-                        .ok_or(HowserError::CapabilityError)?
-                        .itself()?);
+                    let end_node = Some(node.itself()?);
                     if let Some(prev_match) = self.scan_for_block_match(&bookmark, &end_node, &rx)?
                     {
-                        let match_traverser = prev_match
-                            .capabilities
-                            .traverse
-                            .as_ref()
-                            .ok_or(HowserError::CapabilityError)?;
-                        let next_bookmark = match_traverser.prev_sibling()?;
-                        let next_node = match_traverser.prev_sibling()?;
-                        let next_rx = rx.capabilities
-                            .traverse
-                            .as_ref()
-                            .ok_or(HowserError::CapabilityError)?
-                            .prev_sibling()?;
+                        let next_bookmark = prev_match.next_sibling()?;
+                        let next_node = prev_match.next_sibling()?;
+                        let next_rx = rx.next_sibling()?;
                         info!("consume_mandatory_block_match:: Current node mismatch, but match found from bookmark");
                         Ok(MatchResult::State(MatchState {
                             rx: next_rx,
@@ -582,18 +468,9 @@ impl<'a> Validator<'a> {
             }
         } else {
             if let Some(prev_match) = self.scan_for_block_match(&bookmark, &None, &rx)? {
-                let match_traverser = prev_match
-                    .capabilities
-                    .traverse
-                    .as_ref()
-                    .ok_or(HowserError::CapabilityError)?;
-                let next_bookmark = match_traverser.prev_sibling()?;
-                let next_node = match_traverser.prev_sibling()?;
-                let next_rx = rx.capabilities
-                    .traverse
-                    .as_ref()
-                    .ok_or(HowserError::CapabilityError)?
-                    .prev_sibling()?;
+                let next_bookmark = prev_match.next_sibling()?;
+                let next_node = prev_match.next_sibling()?;
+                let next_rx = rx.next_sibling()?;
                 info!("consume_mandatory_block_match:: No current node, but match found from bookmark");
                 Ok(MatchResult::State(MatchState {
                     rx: next_rx,
@@ -622,16 +499,8 @@ impl<'a> Validator<'a> {
         if let Some(node) = node {
             match self.check_block_match(&node, &rx)? {
                 None => {
-                    let next_node = node.capabilities
-                        .traverse
-                        .as_ref()
-                        .ok_or(HowserError::CapabilityError)?
-                        .prev_sibling()?;
-                    let next_rx = rx.capabilities
-                        .traverse
-                        .as_ref()
-                        .ok_or(HowserError::CapabilityError)?
-                        .prev_sibling()?;
+                    let next_node = node.next_sibling()?;
+                    let next_rx = rx.next_sibling()?;
                     Ok(MatchResult::State(MatchState {
                         rx: next_rx,
                         node: next_node,
@@ -639,11 +508,7 @@ impl<'a> Validator<'a> {
                     }))
                 }
                 Some(_) => {
-                    let next_rx = rx.capabilities
-                        .traverse
-                        .as_ref()
-                        .ok_or(HowserError::CapabilityError)?
-                        .prev_sibling()?;
+                    let next_rx = rx.next_sibling()?;
                     Ok(MatchResult::State(MatchState {
                         rx: next_rx,
                         node: Some(node),
@@ -652,11 +517,7 @@ impl<'a> Validator<'a> {
                 }
             }
         } else {
-            let next_rx = rx.capabilities
-                .traverse
-                .as_ref()
-                .ok_or(HowserError::CapabilityError)?
-                .prev_sibling()?;
+            let next_rx = rx.next_sibling()?;
             Ok(MatchResult::State(MatchState {
                 rx: next_rx,
                 node: node,
@@ -675,16 +536,8 @@ impl<'a> Validator<'a> {
         if let Some(node) = node {
             match self.check_inline_match(&rx, &node)? {
                 None => {
-                    let next_node = node.capabilities
-                        .traverse
-                        .as_ref()
-                        .ok_or(HowserError::CapabilityError)?
-                        .next_sibling()?;
-                    let next_rx = rx.capabilities
-                        .traverse
-                        .as_ref()
-                        .ok_or(HowserError::CapabilityError)?
-                        .next_sibling()?;
+                    let next_node = node.next_sibling()?;
+                    let next_rx = rx.next_sibling()?;
                     Ok(MatchResult::State(MatchState {
                         rx: next_rx,
                         node: next_node,
@@ -692,11 +545,7 @@ impl<'a> Validator<'a> {
                     }))
                 }
                 Some(_) => {
-                    let next_rx = rx.capabilities
-                        .traverse
-                        .as_ref()
-                        .ok_or(HowserError::CapabilityError)?
-                        .next_sibling()?;
+                    let next_rx = rx.next_sibling()?;
                     Ok(MatchResult::State(MatchState {
                         rx: next_rx,
                         node: Some(node),
@@ -705,11 +554,7 @@ impl<'a> Validator<'a> {
                 }
             }
         } else {
-            let next_rx = rx.capabilities
-                .traverse
-                .as_ref()
-                .ok_or(HowserError::CapabilityError)?
-                .next_sibling()?;
+            let next_rx = rx.next_sibling()?;
             Ok(MatchResult::State(MatchState {
                 rx: next_rx,
                 node,
@@ -730,30 +575,14 @@ impl<'a> Validator<'a> {
         if let Some(node) = node {
             match self.check_inline_match(&rx, &node)? {
                 None => {
-                    let end_node = Some(node.capabilities
-                        .traverse
-                        .as_ref()
-                        .ok_or(HowserError::CapabilityError)?
-                        .itself()?);
+                    let end_node = Some(node.itself()?);
                     let next_bookmark = match self.scan_for_inline_match(&bookmark, &end_node, &rx)?
                     {
-                        Some(node) => node.capabilities
-                            .traverse
-                            .as_ref()
-                            .ok_or(HowserError::CapabilityError)?
-                            .next_sibling()?,
+                        Some(node) => node.next_sibling()?,
                         None => None,
                     };
-                    let next_node = node.capabilities
-                        .traverse
-                        .as_ref()
-                        .ok_or(HowserError::CapabilityError)?
-                        .next_sibling()?;
-                    let next_rx = rx.capabilities
-                        .traverse
-                        .as_ref()
-                        .ok_or(HowserError::CapabilityError)?
-                        .next_sibling()?;
+                    let next_node = node.next_sibling()?;
+                    let next_rx = rx.next_sibling()?;
 
                     info!("consume_mandatory_inline_match:: Matched!");
                     Ok(MatchResult::State(MatchState {
@@ -763,30 +592,12 @@ impl<'a> Validator<'a> {
                     }))
                 }
                 Some(err) => {
-                    let end_node = Some(node.capabilities
-                        .traverse
-                        .as_ref()
-                        .ok_or(HowserError::CapabilityError)?
-                        .itself()?);
+                    let end_node = Some(node.itself()?);
                     if let Some(prev_match) = self.scan_for_inline_match(&bookmark, &end_node, &rx)?
                     {
-                        let next_bookmark = prev_match
-                            .capabilities
-                            .traverse
-                            .as_ref()
-                            .ok_or(HowserError::CapabilityError)?
-                            .next_sibling()?;
-                        let next_node = prev_match
-                            .capabilities
-                            .traverse
-                            .as_ref()
-                            .ok_or(HowserError::CapabilityError)?
-                            .next_sibling()?;
-                        let next_rx = rx.capabilities
-                            .traverse
-                            .as_ref()
-                            .ok_or(HowserError::CapabilityError)?
-                            .next_sibling()?;
+                        let next_bookmark = prev_match.next_sibling()?;
+                        let next_node = prev_match.next_sibling()?;
+                        let next_rx = rx.next_sibling()?;
                         info!("consume_mandatory_inline_match:: Bookmark Match Found!");
                         Ok(MatchResult::State(MatchState {
                             rx: next_rx,
@@ -800,18 +611,9 @@ impl<'a> Validator<'a> {
             }
         } else {
             if let Some(prev_match) = self.scan_for_inline_match(&bookmark, &None, &rx)? {
-                let match_traverser = prev_match
-                    .capabilities
-                    .traverse
-                    .as_ref()
-                    .ok_or(HowserError::CapabilityError)?;
-                let next_bookmark = match_traverser.next_sibling()?;
-                let next_node = match_traverser.next_sibling()?;
-                let next_rx = rx.capabilities
-                    .traverse
-                    .as_ref()
-                    .ok_or(HowserError::CapabilityError)?
-                    .next_sibling()?;
+                let next_bookmark = prev_match.next_sibling()?;
+                let next_node = prev_match.next_sibling()?;
+                let next_rx = rx.next_sibling()?;
                 info!("consume_mandatory_inline_match:: Bookmark Match Found!");
                 Ok(MatchResult::State(MatchState {
                     rx: next_rx,
@@ -844,12 +646,7 @@ impl<'a> Validator<'a> {
         rx: &Node,
     ) -> HowserResult<Option<Node>> {
         trace!("scan_for_block_match()");
-        let mut current_node = Some(start_node
-            .capabilities
-            .traverse
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?
-            .itself()?);
+        let mut current_node = Some(start_node.itself()?);
 
         while let Some(node) = current_node {
             if let None = self.check_block_match(&node, rx)? {
@@ -857,32 +654,15 @@ impl<'a> Validator<'a> {
             }
 
             if let &Some(ref stop_node) = end_node {
-                let node_id = node.capabilities
-                    .get
-                    .as_ref()
-                    .ok_or(HowserError::CapabilityError)?
-                    .get_id()?;
-                let stop_id = stop_node
-                    .capabilities
-                    .get
-                    .as_ref()
-                    .ok_or(HowserError::CapabilityError)?
-                    .get_id()?;
+                let node_id = node.get_id();
+                let stop_id = stop_node.get_id();
                 if node_id == stop_id {
                     current_node = None;
                 } else {
-                    current_node = node.capabilities
-                        .traverse
-                        .as_ref()
-                        .ok_or(HowserError::CapabilityError)?
-                        .prev_sibling()?;
+                    current_node = node.next_sibling()?;
                 }
             } else {
-                current_node = node.capabilities
-                    .traverse
-                    .as_ref()
-                    .ok_or(HowserError::CapabilityError)?
-                    .prev_sibling()?;
+                current_node = node.next_sibling()?;
             }
         }
 
@@ -901,12 +681,7 @@ impl<'a> Validator<'a> {
         rx: &Node,
     ) -> HowserResult<Option<Node>> {
         trace!("scan_for_inline_match::");
-        let mut current_node = Some(start_node
-            .capabilities
-            .traverse
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?
-            .itself()?);
+        let mut current_node = Some(start_node.itself()?);
 
         while let Some(node) = current_node {
             if let None = self.check_inline_match(rx, &node)? {
@@ -914,33 +689,16 @@ impl<'a> Validator<'a> {
             }
 
             if let &Some(ref stop_node) = end_node {
-                let node_id = node.capabilities
-                    .get
-                    .as_ref()
-                    .ok_or(HowserError::CapabilityError)?
-                    .get_id()?;
-                let stop_id = stop_node
-                    .capabilities
-                    .get
-                    .as_ref()
-                    .ok_or(HowserError::CapabilityError)?
-                    .get_id()?;
+                let node_id = node.get_id();
+                let stop_id = stop_node.get_id();
 
                 if node_id == stop_id {
                     current_node = None;
                 } else {
-                    current_node = node.capabilities
-                        .traverse
-                        .as_ref()
-                        .ok_or(HowserError::CapabilityError)?
-                        .next_sibling()?;
+                    current_node = node.next_sibling()?;
                 }
             } else {
-                current_node = node.capabilities
-                    .traverse
-                    .as_ref()
-                    .ok_or(HowserError::CapabilityError)?
-                    .next_sibling()?;
+                current_node = node.next_sibling()?;
             }
         }
 
@@ -952,7 +710,7 @@ impl<'a> Validator<'a> {
     /// Inputs are assumed to be block elements.
     fn check_block_match(&self, node: &Node, rx: &Node) -> HowserResult<Option<ValidationProblem>> {
         trace!("check_block_match::");
-        match ElementType::determine(rx)? {
+        match ElementType::determine(rx) {
             ElementType::ContainerBlock => Ok(self.check_container_block_match(&node, &rx)?),
             ElementType::LeafBlock => Ok(self.check_leaf_block_match(&node, &rx)?),
             _ => {
@@ -1034,7 +792,7 @@ impl<'a> Validator<'a> {
         node: &Node,
     ) -> HowserResult<Option<ValidationProblem>> {
         trace!("check_inline_match::");
-        match ElementType::determine(rx)? {
+        match ElementType::determine(rx) {
             ElementType::InlineLeaf => self.check_inline_leaf_match(node, rx),
             ElementType::InlineContainer => self.check_inline_container_match(node, rx),
             _ => {
@@ -1061,14 +819,8 @@ impl<'a> Validator<'a> {
             return Ok(Some(Box::new(error)));
         }
 
-        let node_type = node.capabilities
-            .get
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?
-            .get_type()?;
-
-        match node_type {
-            NodeType::CMarkNodeLink => self.validate_link_node_content(node, rx),
+        match node {
+            Node::Link(_) => self.validate_link_node_content(node, rx),
             _ => self.validate_sibling_inlines(rx, node),
         }
     }
@@ -1096,7 +848,7 @@ impl<'a> Validator<'a> {
     /// Determines if the given prescription `Node` is a wildcard.
     fn node_is_wildcard(&self, rx: &Node) -> HowserResult<bool> {
         trace!("node_is_wildcard()");
-        match self.prescription.document.is_wildcard(rx)? {
+        match self.prescription.document.is_wildcard(rx) {
             true => {
                 info!("Wildcard!");
                 Ok(true)
@@ -1117,13 +869,9 @@ impl<'a> Validator<'a> {
         rx: &Node,
     ) -> HowserResult<Option<ValidationProblem>> {
         trace!("validate_node_content()");
-        let rx_getter = rx.capabilities
-            .get
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?;
-        match rx_getter.get_type()? {
-            NodeType::CMarkNodeLink => self.validate_link_node_content(node, rx),
-            _ => self.validate_general_node_content(node, rx),
+        match rx {
+            Node::Link(_) => self.validate_link_node_content(node, rx),
+            _ => self.validate_text_node_content(node, rx),
         }
     }
 
@@ -1136,67 +884,63 @@ impl<'a> Validator<'a> {
         rx: &Node,
     ) -> HowserResult<Option<ValidationProblem>> {
         trace!("validate_link_node_content()");
-        let node_getter = node.capabilities
-            .get
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?;
-        let rx_getter = rx.capabilities
-            .get
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?;
+        match (node, rx) {
+            (Node::Link(ref node_link), Node::Link(ref rx_link)) => {
+                let node_url = node_link.get_url()?;
+                let rx_url = rx_link.get_url()?;
+                let url_match_pairs = Self::check_content_match(&node_url, &rx_url)?;
 
-        let node_url = node_getter.get_url()?;
-        let rx_url = rx_getter.get_url()?;
-        let url_match_pairs = Self::check_content_match(&node_url, &rx_url)?;
+                let node_title = node_link.get_title()?;
+                let rx_title = rx_link.get_title()?;
+                let title_match_pairs = Self::check_content_match(&node_title, &rx_title)?;
 
-        let node_title = node_getter.get_title()?;
-        let rx_title = rx_getter.get_title()?;
-        let title_match_pairs = Self::check_content_match(&node_title, &rx_title)?;
-
-        if ContentMatchPair::contains_mismatch(&url_match_pairs) {
-            debug!("Link destination Error");
-            let error = TextualContentError::new(
-                rx,
-                node,
-                &self.prescription,
-                &self.document,
-                &url_match_pairs,
-            )?;
-            Ok(Some(Box::new(error)))
-        } else if ContentMatchPair::contains_mismatch(&title_match_pairs) {
-            debug!("Link title Error");
-            let error = TextualContentError::new(
-                rx,
-                node,
-                &self.prescription,
-                &self.document,
-                &title_match_pairs,
-            )?;
-            Ok(Some(Box::new(error)))
-        } else {
-            self.validate_sibling_inlines(rx, node)
+                if ContentMatchPair::contains_mismatch(&url_match_pairs) {
+                    debug!("Link destination Error");
+                    let error = TextualContentError::new(
+                        rx,
+                        node,
+                        &self.prescription,
+                        &self.document,
+                        &url_match_pairs,
+                    )?;
+                    Ok(Some(Box::new(error)))
+                } else if ContentMatchPair::contains_mismatch(&title_match_pairs) {
+                    debug!("Link title Error");
+                    let error = TextualContentError::new(
+                        rx,
+                        node,
+                        &self.prescription,
+                        &self.document,
+                        &title_match_pairs,
+                    )?;
+                    Ok(Some(Box::new(error)))
+                } else {
+                    self.validate_sibling_inlines(rx, node)
+                }
+            }
+            _ => Err(HowserError::RuntimeError(
+                "validate_link_node_content called with non-link node".to_string(),
+            )),
         }
     }
 
     /// Performs validation of the textual content of a text node.
     ///
     /// Returns `None` if valid.
-    fn validate_general_node_content(
+    fn validate_text_node_content(
         &self,
         node: &Node,
         rx: &Node,
     ) -> HowserResult<Option<ValidationProblem>> {
-        trace!("validate_general_node_content()");
-        let rx_getter = rx.capabilities
-            .get
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?;
-        let node_getter = node.capabilities
-            .get
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?;
-        let node_content = node_getter.get_content()?;
-        let rx_content = rx_getter.get_content()?.to_string();
+        let (node_content, rx_content) = match (node, rx) {
+            (Node::Text(ref node_text), Node::Text(ref rx_text)) => {
+                (node_text.get_content()?, rx_text.get_content()?)
+            }
+            (Node::Code(ref node_code), Node::Code(ref rx_code)) => {
+                (node_code.get_content()?, rx_code.get_content()?)
+            }
+            _ => (String::new(), String::new()),
+        };
         let match_pairs = Self::check_content_match(&node_content, &rx_content)?;
 
         if ContentMatchPair::contains_mismatch(&match_pairs) {
@@ -1369,43 +1113,37 @@ impl<'a> Validator<'a> {
 /// Takes into account heading levels and list types.
 pub fn types_match(node: &Node, other: &Node) -> HowserResult<bool> {
     trace!("types_match()");
-    let node_getter = node.capabilities
-        .get
-        .as_ref()
-        .ok_or(HowserError::CapabilityError)?;
-    let rx_getter = other
-        .capabilities
-        .get
-        .as_ref()
-        .ok_or(HowserError::CapabilityError)?;
-
-    let node_type = node_getter.get_type()?;
-    let rx_type = rx_getter.get_type()?;
+    let node_type = node.get_cmark_type()?;
+    let rx_type = other.get_cmark_type()?;
 
     if node_type == rx_type {
-        if node_type == NodeType::CMarkNodeHeading {
-            let node_level = node_getter.get_heading_level()?;
-            let rx_level = rx_getter.get_heading_level()?;
-            if node_level == rx_level {
-                info!("types_match:: Headings match");
-                return Ok(true);
-            } else {
-                debug!("types_match:: Heading level mismatch");
-                return Ok(false);
+        match (node, other) {
+            (Node::Heading(node_heading), Node::Heading(ref rx_heading)) => {
+                let node_level = node_heading.get_level();
+                let rx_level = rx_heading.get_level();
+                if node_level == rx_level {
+                    info!("types_match:: Headings match");
+                    return Ok(true);
+                } else {
+                    debug!("types_match:: Heading level mismatch");
+                    return Ok(false);
+                }
             }
-        } else if node_type == NodeType::CMarkNodeList {
-            let node_list_type = node_getter.get_list_type()?;
-            let rx_list_type = rx_getter.get_list_type()?;
-            if node_list_type == rx_list_type {
-                info!("types_match:: List types match");
-                return Ok(true);
-            } else {
-                debug!("types_match:: List type mismatch");
-                return Ok(false);
+            (Node::List(ref node_list), Node::List(ref rx_list)) => {
+                let node_list_type = node_list.get_list_type()?;
+                let rx_list_type = rx_list.get_list_type()?;
+                if node_list_type == rx_list_type {
+                    info!("types_match:: List types match");
+                    return Ok(true);
+                } else {
+                    debug!("types_match:: List type mismatch");
+                    return Ok(false);
+                }
             }
-        } else {
-            info!("types_match:: Match!");
-            return Ok(true);
+            _ => {
+                info!("types_match:: Match!");
+                return Ok(true);
+            }
         }
     }
 
@@ -1418,6 +1156,7 @@ pub fn types_match(node: &Node, other: &Node) -> HowserResult<bool> {
 
 #[cfg(test)]
 mod tests {
+    use super::env_logger;
     use super::Validator;
     use data::ContentMatchPair;
     use document::Document;
@@ -1887,6 +1626,7 @@ mod tests {
 
     #[test]
     fn test_optional_repeatable_list_item_match() {
+        env_logger::init();
         let rx_text = "* Foo -!!-\n* -??-\n* Bar -!!-\n* -\"\"-";
         let match_text_1 = "* Foo Foo";
         let match_text_2 = "* Foo Foo\n* Bar Bar\n* Bar Baz";

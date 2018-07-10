@@ -74,7 +74,8 @@ FLAGS:
 
 SUBCOMMANDS:
     check       Verifies that an .rx file conforms to the Rx spec.
-    validate    Validate a Markdown document against an .rx Prescription file.
+    pharmacy    Specifies prescription and document targets from a pharmacy file.
+    validate    Validates a Markdown document against an .rx Prescription file.
 ```
 
 *
@@ -99,21 +100,71 @@ SUBCOMMANDS:
     $ howser validate --help
     
     howser-validate 
-    Validate a Markdown document against an .rx Prescription file.
+    Validates a Markdown document against an .rx Prescription file.
     
     USAGE:
-        howser validate [FLAGS] [OPTIONS] <PRESCRIPTION> <DOCUMENT>
+        howser validate [FLAGS] <PRESCRIPTION> <DOCUMENT>
     
     FLAGS:
         -h, --help       Prints help information.
         -v, --verbose    Use verbose (multiline) output for errors and warnings.
     
-    OPTIONS:
-        -p, --pharmacy <PHARMACY>    Performs validation based on a pharmacy file
-    
     ARGS:
         <PRESCRIPTION>    
         <DOCUMENT> 
+    ```
+    
+    ```
+    $ howser pharmacy --help
+    
+    howser-pharmacy 
+    Specifies prescription and document targets from a pharmacy file.
+    
+    USAGE:
+        howser pharmacy <SUBCOMMAND>
+    
+    FLAGS:
+        -h, --help    Prints help information.
+    
+    SUBCOMMANDS:
+        check       Verifies that all the .rx files in the pharmacy file conform to the Rx spec.
+        validate    Validates all the Markdown document and .rx Prescription file pairs in the pharmacy file.
+    ```
+    
+    ```
+    $ howser pharmacy check
+    
+    howser-pharmacy-check 
+    Verifies that all the .rx files in the pharmacy file conform to the Rx spec.
+    
+    USAGE:
+        howser pharmacy check [FLAGS] <PHARMACY>
+    
+    FLAGS:
+        -e, --fail-early    Stop processing and exit after the first error.
+        -h, --help          Prints help information.
+        -v, --verbose       Use verbose (multiline) output for errors and warnings.
+    
+    ARGS:
+        <PHARMACY>    The .toml file containing the documents to process.
+    ```
+    
+    ```
+    $ howser pharmacy validate
+    
+    howser-pharmacy-validate 
+    Validates all the Markdown document and .rx Prescription file pairs in the pharmacy file.
+    
+    USAGE:
+        howser pharmacy validate [FLAGS] <PHARMACY>
+    
+    FLAGS:
+        -e, --fail-early    Stop processing and exit after the first error.
+        -h, --help          Prints help information.
+        -v, --verbose       Use verbose (multiline) output for errors and warnings.
+    
+    ARGS:
+        <PHARMACY>    The .toml file containing the documents to process.
     ```
 
 ### Examples
@@ -129,8 +180,7 @@ SUBCOMMANDS:
     SpecWarning :: examples/bad_template.rx line 1 :: An element with a Ditto prompt must be preceded by an element of the same type.
     ```
 
-* Validating conforming and non-conforming markdown files against the
-prescription file `wizard.rx` from the examples directory.
+* Validating conforming and non-conforming markdown files against the prescription file `wizard.rx` from the examples directory.
 
     ```
     $ howser validate examples/wizard.rx examples/wizard.md
@@ -151,13 +201,21 @@ prescription file `wizard.rx` from the examples directory.
     1  We're off to see
     ```
     
-* Using a pharmacy file to run a batch of validation jobs.
+* Use the included Pharmacy file to run a batch of example validation jobs.
 
     ```
-    $ howser validate --pharmacy Pharmacy.toml
+    $ howser pharmacy validate examples/Pharmacy.toml
     
     Valid
     ```
+    
+* Use the crate's Pharmacy file to validate the README.md file.
+
+    ```
+    $ howser pharmacy validate Pharmacy.toml
+    
+    Valid
+    ```    
 
 ## Tests
 

@@ -1,6 +1,5 @@
 //! Abstractions for CMark Documents and Howser Templates.
 
-extern crate env_logger;
 extern crate regex;
 extern crate unicode_segmentation;
 
@@ -14,111 +13,6 @@ use errors::{HowserError, HowserResult, SpecWarning};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use validator::types_match;
-
-/// Abstraction of the different types of block level Rx Elements and their match context.
-///
-/// These are used to parse block level annotations. Integrated types are elements whose annotations
-/// appear within the same node as the content while discrete types represent elements whose
-/// annotation occurs in an adjacent element.
-#[derive(Debug)]
-enum LookaheadType {
-    /// Integrated element with no annotation.
-    IntegratedLiteral(Node),
-    /// Integrated element with annotation and content.
-    IntegratedOccupied(Node, MatchType),
-    /// Integrated element with annotation, but no content.
-    IntegratedVacant(Node, MatchType),
-    /// Discrete element that is an annotation.
-    DiscreteAnnotated(Node, MatchType),
-    /// Discrete element that is content.
-    DiscreteLiteral(Node),
-    /// Any element that has a ditto annotation.
-    Ditto(Node),
-    /// Just list elements.
-    List(Node),
-    /// Elements that do not support annotation or no element.
-    Other(Option<Node>),
-}
-
-impl LookaheadType {
-    /// Returns a `LookaheadType` that is parsed from the given `Node`.
-    fn new(node: Option<Node>) -> HowserResult<Self> {
-        if let Some(node) = node {
-            let match_type = get_annotation(&node)?;
-            match node.capabilities
-                .get
-                .as_ref()
-                .ok_or(HowserError::CapabilityError)?
-                .get_type()?
-            {
-                // List
-                NodeType::CMarkNodeList => Ok(LookaheadType::List(node)),
-                // Integrated
-                NodeType::CMarkNodeParagraph
-                | NodeType::CMarkNodeBlockQuote
-                | NodeType::CMarkNodeCodeBlock => match match_type {
-                    MatchType::Repeatable => Ok(LookaheadType::Ditto(node)),
-                    MatchType::None => Ok(LookaheadType::IntegratedLiteral(node)),
-                    _ => {
-                        if LookaheadType::is_vacant(&node)? {
-                            Ok(LookaheadType::IntegratedVacant(node, match_type))
-                        } else {
-                            Ok(LookaheadType::IntegratedOccupied(node, match_type))
-                        }
-                    }
-                },
-                // Discrete
-                NodeType::CMarkNodeHeading | NodeType::CMarkNodeItem => match match_type {
-                    MatchType::Repeatable => Ok(LookaheadType::Ditto(node)),
-                    MatchType::None => Ok(LookaheadType::DiscreteLiteral(node)),
-                    _ => Ok(LookaheadType::DiscreteAnnotated(node, match_type)),
-                },
-                // Other
-                _ => Ok(LookaheadType::Other(Some(node))),
-            }
-        } else {
-            Ok(LookaheadType::Other(None))
-        }
-    }
-
-    /// Determines whether the given integrated node has content other than its annotation.
-    fn is_vacant(node: &Node) -> HowserResult<bool> {
-        match node.capabilities
-            .get
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?
-            .get_type()?
-        {
-            NodeType::CMarkNodeCodeBlock => Ok(node.capabilities
-                .get
-                .as_ref()
-                .ok_or(HowserError::CapabilityError)?
-                .get_content()?
-                .is_empty()),
-            _ => {
-                if let Some(annotation) = node.capabilities
-                    .traverse
-                    .as_ref()
-                    .ok_or(HowserError::CapabilityError)?
-                    .first_child()?
-                {
-                    Ok(annotation
-                        .capabilities
-                        .traverse
-                        .as_ref()
-                        .ok_or(HowserError::CapabilityError)?
-                        .next_sibling()?
-                        .is_none())
-                } else {
-                    Err(HowserError::RuntimeError(
-                        "Lookahead Error: Got a match type, but no annotation node was present."
-                            .to_string(),
-                    ))
-                }
-            }
-        }
-    }
-}
 
 /// Wrapper for a Markdown document that manages extra metadata about the `Node`s contained within
 /// `root`.
@@ -153,21 +47,8 @@ impl<'a> Document<'a> {
 
     /// Traverse the document tree and return the first node encountered of the type specified.
     pub fn first_of_type(&self, node_type: NodeType) -> HowserResult<Option<Node>> {
-        let traverser = self.root
-            .capabilities
-            .traverse
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?;
-
-        for (node, _) in traverser.iter() {
-            let mut found_type: NodeType;
-            {
-                let getter = node.capabilities
-                    .get
-                    .as_ref()
-                    .ok_or(HowserError::CapabilityError)?;
-                found_type = getter.get_type()?;
-            }
+        for (node, _) in self.root.iter() {
+            let found_type = node.get_cmark_type()?;
             if found_type == node_type {
                 return Ok(Some(node));
             }
@@ -178,53 +59,36 @@ impl<'a> Document<'a> {
 
     /// Returns the `MatchType` of the specified `Node`.
     pub fn get_match_type(&self, node: &Node) -> HowserResult<MatchType> {
-        let getter = node.capabilities
-            .get
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?;
-        let id = getter.get_id()?;
+        let id = node.get_id();
         let mut data_store = self.data.borrow_mut();
         let node_data = data_store.entry(id).or_insert(NodeData::new());
         Ok(node_data.match_type.clone())
     }
 
     /// Set the `MatchType` for a `Node`.
-    fn set_match_type(&self, node: &Node, match_type: MatchType) -> Result<&Self, HowserError> {
-        let getter = node.capabilities
-            .get
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?;
-        let id = getter.get_id()?;
+    fn set_match_type(&self, node: &Node, match_type: MatchType) {
+        trace!("set_match_type()");
+        let id = node.get_id();
         let mut data = self.data.borrow_mut();
         let node_data = data.entry(id).or_insert(NodeData::new());
         node_data.match_type = match_type;
-
-        Ok(self)
     }
 
     /// Returns a boolean indicating if this `Node` is considered a wildcard.
-    pub fn is_wildcard(&self, rx_node: &Node) -> HowserResult<bool> {
-        let getter = rx_node
-            .capabilities
-            .get
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?;
-        let id = getter.get_id()?;
+    pub fn is_wildcard(&self, rx_node: &Node) -> bool {
+        let id = rx_node.get_id();
         let mut data_store = self.data.borrow_mut();
         let node_data = data_store.entry(id).or_insert(NodeData::new());
-        Ok(node_data.is_wildcard)
+        node_data.is_wildcard
     }
 
     /// Set the wildcard status for a `Node`.
-    fn set_is_wildcard(&self, node: &Node, state: bool) -> Result<&Self, HowserError> {
-        if let Some(ref getter) = node.capabilities.get {
-            let id = getter.get_id()?;
-            let mut data = self.data.borrow_mut();
-            let node_data = data.entry(id).or_insert(NodeData::new());
-            node_data.is_wildcard = state;
-        }
-
-        Ok(self)
+    fn set_is_wildcard(&self, node: &Node, state: bool) {
+        trace!("set_is_wildcard()");
+        let id = node.get_id();
+        let mut data = self.data.borrow_mut();
+        let node_data = data.entry(id).or_insert(NodeData::new());
+        node_data.is_wildcard = state;
     }
 
     /// Infers the line number of the given node.
@@ -233,16 +97,8 @@ impl<'a> Document<'a> {
     /// incorrect. This function searches up through the tree ancestry until it finds a parent node
     /// that reports a sensible line number and returns that.
     pub fn get_line_num(node: &Node) -> HowserResult<usize> {
-        let parent = node.capabilities
-            .traverse
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?
-            .parent()?;
-        let line_num = node.capabilities
-            .get
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?
-            .get_start_line()?;
+        let parent = node.parent()?;
+        let line_num = node.get_start_line();
 
         match (parent, line_num) {
             (Some(parent), 0) => Document::get_line_num(&parent),
@@ -258,15 +114,10 @@ pub struct Prescription<'a> {
 
 /// Process the match types of the children of the given parent.
 fn process_child_elements(parent: &Node, document: &Document) -> HowserResult<()> {
-    let child = parent
-        .capabilities
-        .traverse
-        .as_ref()
-        .ok_or(HowserError::CapabilityError)?
-        .first_child()?;
+    let child = parent.first_child()?;
 
     if let Some(ref node) = child {
-        match ElementType::determine(node)? {
+        match ElementType::determine(node) {
             ElementType::InlineContainer | ElementType::InlineLeaf => {
                 process_child_inline_elements(parent, document)
             }
@@ -279,22 +130,18 @@ fn process_child_elements(parent: &Node, document: &Document) -> HowserResult<()
 
 /// Process the match types of a set of inline elements that are children of the given parent.
 fn process_child_inline_elements(parent: &Node, document: &Document) -> HowserResult<()> {
-    let mut current_child = parent
-        .capabilities
-        .traverse
-        .as_ref()
-        .ok_or(HowserError::CapabilityError)?
-        .first_child()?;
+    let mut current_child = parent.first_child()?;
 
     while let Some(node) = current_child {
-        let getter = node.capabilities
-            .get
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?;
-        match getter.get_type()? {
-            NodeType::CMarkNodeText | NodeType::CMarkNodeCode => {
-                if all_content_is_optional(&getter.get_content()?)? {
-                    document.set_match_type(&node, MatchType::Optional)?;
+        match node {
+            Node::Text(ref text) => {
+                if all_content_is_optional(&text.get_content()?)? {
+                    document.set_match_type(&node, MatchType::Optional);
+                }
+            }
+            Node::Code(ref code) => {
+                if all_content_is_optional(&code.get_content()?)? {
+                    document.set_match_type(&node, MatchType::Optional);
                 }
             }
             _ => {
@@ -303,11 +150,7 @@ fn process_child_inline_elements(parent: &Node, document: &Document) -> HowserRe
             }
         }
 
-        current_child = node.capabilities
-            .traverse
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?
-            .next_sibling()?;
+        current_child = node.next_sibling()?;
     }
 
     Ok(())
@@ -325,24 +168,13 @@ fn all_content_is_optional(content: &String) -> HowserResult<bool> {
 
 /// Extract and transform the block-level Rx annotations from the document into metadata.
 fn process_child_block_elements(parent: &Node, document: &Document) -> HowserResult<()> {
-    trace!("process_child_block_elements::");
-    let mut current_child = parent
-        .capabilities
-        .traverse
-        .as_ref()
-        .ok_or(HowserError::CapabilityError)?
-        .first_child()?;
+    trace!("process_child_block_elements()");
+    let mut current_child = parent.first_child()?;
 
     while let Some(l1_node) = current_child {
         let mut l2 = LookaheadType::Other(None);
 
-        if let Some(l2_node) = l1_node
-            .capabilities
-            .traverse
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?
-            .next_sibling()?
-        {
+        if let Some(l2_node) = l1_node.next_sibling()? {
             if types_match(&l1_node, &l2_node)? {
                 l2 = LookaheadType::new(Some(l2_node))?;
             } else {
@@ -361,94 +193,94 @@ fn process_child_block_elements(parent: &Node, document: &Document) -> HowserRes
                 LookaheadType::Ditto(ditto),
             ) => {
                 process_child_elements(&target, document)?;
-                document.set_match_type(&ditto, MatchType::Repeatable)?;
-                current_child = ditto.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.next_sibling()?;
+                document.set_match_type(&ditto, MatchType::Repeatable);
+                current_child = ditto.next_sibling()?;
             },
             (
                 LookaheadType::DiscreteLiteral(target),
                 _,
             ) => {
                 process_child_elements(&target, document)?;
-                current_child = target.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.next_sibling()?;
+                current_child = target.next_sibling()?;
             },
             (
-                LookaheadType::DiscreteAnnotated(annotation, match_type),
+                LookaheadType::DiscreteAnnotated(mut annotation, match_type),
                 LookaheadType::DiscreteLiteral(target),
             ) => {
-                document.set_match_type(&target, match_type)?;
-                annotation.capabilities.mutate.as_ref().ok_or(HowserError::CapabilityError)?.unlink();
+                document.set_match_type(&target, match_type);
+                annotation.unlink();
                 current_child = Some(target);
             },
             (
-                LookaheadType::DiscreteAnnotated(target, match_type),
+                LookaheadType::DiscreteAnnotated(mut target, match_type),
                 LookaheadType::Ditto(ditto),
             ) => {
-                remove_annotation(&target)?;
-                document.set_match_type(&target, match_type)?;
-                document.set_is_wildcard(&target, true)?;
-                document.set_match_type(&ditto, MatchType::Repeatable)?;
-                current_child = ditto.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.next_sibling()?;
+                remove_annotation(&mut target)?;
+                document.set_match_type(&target, match_type);
+                document.set_is_wildcard(&target, true);
+                document.set_match_type(&ditto, MatchType::Repeatable);
+                current_child = ditto.next_sibling()?;
             },
             (
                 LookaheadType::DiscreteAnnotated(target, match_type),
                 _,
             ) => {
-                document.set_match_type(&target, match_type)?;
-                document.set_is_wildcard(&target, true)?;
-                current_child = target.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.next_sibling()?;
+                document.set_match_type(&target, match_type);
+                document.set_is_wildcard(&target, true);
+                current_child = target.next_sibling()?;
             },
             (
                 LookaheadType::IntegratedLiteral(target),
                 LookaheadType::Ditto(ditto),
             ) => {
                 process_child_elements(&target, document)?;
-                document.set_match_type(&ditto, MatchType::Repeatable)?;
-                current_child = ditto.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.next_sibling()?;
+                document.set_match_type(&ditto, MatchType::Repeatable);
+                current_child = ditto.next_sibling()?;
             },
             (
                 LookaheadType::IntegratedLiteral(target),
                 _,
             ) => {
                 process_child_elements(&target, document)?;
-                current_child = target.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.next_sibling()?;
+                current_child = target.next_sibling()?;
             },
             (
-                LookaheadType::IntegratedVacant(target, match_type),
+                LookaheadType::IntegratedVacant(mut target, match_type),
                 LookaheadType::Ditto(ditto),
             ) => {
-                remove_annotation(&target)?;
-                document.set_match_type(&target, match_type)?;
-                document.set_match_type(&ditto, MatchType::Repeatable)?;
-                document.set_is_wildcard(&target, true)?;
-                current_child = ditto.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.next_sibling()?;
+                remove_annotation(&mut target)?;
+                document.set_match_type(&target, match_type);
+                document.set_match_type(&ditto, MatchType::Repeatable);
+                document.set_is_wildcard(&target, true);
+                current_child = ditto.next_sibling()?;
             },
             (
-                LookaheadType::IntegratedVacant(target, match_type),
+                LookaheadType::IntegratedVacant(mut target, match_type),
                 _,
             ) => {
-                remove_annotation(&target)?;
-                document.set_match_type(&target, match_type)?;
-                document.set_is_wildcard(&target, true)?;
-                current_child = target.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.next_sibling()?;
+                remove_annotation(&mut target)?;
+                document.set_match_type(&target, match_type);
+                document.set_is_wildcard(&target, true);
+                current_child = target.next_sibling()?;
             },
             (
-                LookaheadType::IntegratedOccupied(target, match_type),
+                LookaheadType::IntegratedOccupied(mut target, match_type),
                 LookaheadType::Ditto(ditto),
             ) => {
                 process_child_elements(&target, document)?;
-                remove_annotation(&target)?;
-                document.set_match_type(&target, match_type)?;
-                document.set_match_type(&ditto, MatchType::Repeatable)?;
-                current_child = ditto.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.next_sibling()?;
+                remove_annotation(&mut target)?;
+                document.set_match_type(&target, match_type);
+                document.set_match_type(&ditto, MatchType::Repeatable);
+                current_child = ditto.next_sibling()?;
             },
             (
-                LookaheadType::IntegratedOccupied(target, match_type),
+                LookaheadType::IntegratedOccupied(mut target, match_type),
                 _,
             ) => {
                 process_child_elements(&target, document)?;
-                remove_annotation(&target)?;
-                document.set_match_type(&target, match_type)?;
-                current_child = target.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.next_sibling()?;
+                remove_annotation(&mut target)?;
+                document.set_match_type(&target, match_type);
+                current_child = target.next_sibling()?;
             },
             (
                 LookaheadType::List(target),
@@ -456,7 +288,7 @@ fn process_child_block_elements(parent: &Node, document: &Document) -> HowserRes
             ) => {
                 process_child_elements(&target, document)?;
                 annotate_circumstantial_node(&target, document)?;
-                current_child = target.capabilities.traverse.as_ref().ok_or(HowserError::CapabilityError)?.next_sibling()?;
+                current_child = target.next_sibling()?;
             },
             (LookaheadType::Ditto(node), _) => {
                 return Err(HowserError::PrescriptionError(SpecWarning::new(&node, document, "An element with a Ditto prompt must be preceded by an element of the same type.")?))
@@ -472,143 +304,70 @@ fn process_child_block_elements(parent: &Node, document: &Document) -> HowserRes
 ///
 /// Returns None if the element is not annotated.
 fn get_annotation(node: &Node) -> HowserResult<MatchType> {
-    match node.capabilities
-        .get
-        .as_ref()
-        .ok_or(HowserError::CapabilityError)?
-        .get_type()?
-    {
-        NodeType::CMarkNodeParagraph => get_paragraph_annotation(node),
-        NodeType::CMarkNodeBlockQuote => get_block_quote_annotation(node),
-        NodeType::CMarkNodeCodeBlock => get_code_block_annotation(node),
-        NodeType::CMarkNodeHeading => get_heading_annotation(node),
-        NodeType::CMarkNodeItem => get_item_annotation(node),
+    trace!("document::get_annotation");
+    match node {
+        Node::Paragraph(_) => get_paragraph_annotation(node),
+        Node::BlockQuote(_) => get_block_quote_annotation(node),
+        Node::CodeBlock(_) => get_code_block_annotation(node),
+        Node::Heading(_) => get_heading_annotation(node),
+        Node::Item(_) => get_item_annotation(node),
         _ => Ok(MatchType::None),
     }
 }
 
 /// Strips the annotation from a block level element if one exists.
-fn remove_annotation(node: &Node) -> HowserResult<()> {
-    match node.capabilities
-        .get
-        .as_ref()
-        .ok_or(HowserError::CapabilityError)?
-        .get_type()?
-    {
-        NodeType::CMarkNodeParagraph => remove_paragraph_annotation(node),
-        NodeType::CMarkNodeBlockQuote => remove_block_quote_annotation(node),
-        NodeType::CMarkNodeCodeBlock => remove_code_block_annotation(node),
-        NodeType::CMarkNodeHeading => remove_heading_annotation(node),
-        NodeType::CMarkNodeItem => remove_item_annotation(node),
+fn remove_annotation(node: &mut Node) -> HowserResult<()> {
+    trace!("remove_annotation()");
+    match node {
+        Node::Paragraph(_) => remove_paragraph_annotation(node),
+        Node::BlockQuote(_) => remove_block_quote_annotation(node),
+        Node::CodeBlock(_) => remove_code_block_annotation(node),
+        Node::Heading(_) => remove_heading_annotation(node),
+        Node::Item(_) => remove_item_annotation(node),
         _ => Ok(()),
     }
 }
 
 /// Returns the block level annotation of a paragraph node if one exists.
 fn get_paragraph_annotation(node: &Node) -> HowserResult<MatchType> {
-    if let Some(text_node) = node.capabilities
-        .traverse
-        .as_ref()
-        .ok_or(HowserError::CapabilityError)?
-        .first_child()?
-    {
-        let softbreak = text_node
-            .capabilities
-            .traverse
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?
-            .next_sibling()?;
-        if let Some(ref node) = softbreak {
-            if node.capabilities
-                .get
-                .as_ref()
-                .ok_or(HowserError::CapabilityError)?
-                .get_type()? != NodeType::CMarkNodeSoftbreak
-            {
-                return Ok(MatchType::None);
+    trace!("get_paragraph_annotation()");
+    if let Some(text_node @ Node::Text(_)) = node.first_child()? {
+        match text_node.next_sibling()? {
+            Some(Node::SoftBreak(_)) | None => {
+                if let Node::Text(ref text) = text_node {
+                    let content = text.get_content()?;
+                    let (token, remainder) = extract_match_type(&content)?;
+                    if token != MatchType::None && remainder.is_empty() {
+                        return Ok(token);
+                    }
+                }
             }
+            _ => (),
         }
-        if text_node
-            .capabilities
-            .get
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?
-            .get_type()? != NodeType::CMarkNodeText
-        {
-            return Ok(MatchType::None);
-        }
-        let text = text_node
-            .capabilities
-            .get
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?
-            .get_content()?;
-        let (token, content) = extract_match_type(&text)?;
-        if token != MatchType::None && content.is_empty() {
-            Ok(token)
-        } else {
-            Ok(MatchType::None)
-        }
-    } else {
-        Ok(MatchType::None)
     }
+
+    Ok(MatchType::None)
 }
 
 /// Strips the block-level annotation from a paragraph node if one exists.
-fn remove_paragraph_annotation(node: &Node) -> HowserResult<()> {
-    if let Some(text_node) = node.capabilities
-        .traverse
-        .as_ref()
-        .ok_or(HowserError::CapabilityError)?
-        .first_child()?
-    {
-        let softbreak = text_node
-            .capabilities
-            .traverse
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?
-            .next_sibling()?;
-        if let Some(ref node) = softbreak {
-            if node.capabilities
-                .get
-                .as_ref()
-                .ok_or(HowserError::CapabilityError)?
-                .get_type()? != NodeType::CMarkNodeSoftbreak
-            {
-                return Ok(());
+fn remove_paragraph_annotation(node: &mut Node) -> HowserResult<()> {
+    if let Some(mut text_node @ Node::Text(_)) = node.first_child()? {
+        let sibling = text_node.next_sibling()?;
+        match sibling {
+            Some(Node::SoftBreak(_)) | None => {
+                let match_result = match text_node {
+                    Node::Text(ref text) => extract_match_type(&text.get_content()?)?,
+                    _ => (MatchType::None, String::new()),
+                };
+                let (token, remainder) = match_result;
+                if token != MatchType::None && remainder.is_empty() {
+                    text_node.unlink();
+                    if let Some(mut node) = sibling {
+                        node.unlink();
+                    }
+                }
             }
-        }
-        if text_node
-            .capabilities
-            .get
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?
-            .get_type()? != NodeType::CMarkNodeText
-        {
-            return Ok(());
-        }
-        let text = text_node
-            .capabilities
-            .get
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?
-            .get_content()?;
-        let (token, content) = extract_match_type(&text)?;
-        if token != MatchType::None && content.is_empty() {
-            text_node
-                .capabilities
-                .mutate
-                .as_ref()
-                .ok_or(HowserError::CapabilityError)?
-                .unlink();
-
-            if let Some(node) = softbreak {
-                node.capabilities
-                    .mutate
-                    .as_ref()
-                    .ok_or(HowserError::CapabilityError)?
-                    .unlink();
-            }
+            _ => (),
         }
     }
 
@@ -617,59 +376,19 @@ fn remove_paragraph_annotation(node: &Node) -> HowserResult<()> {
 
 /// Returns the block-level annotation from a block quote node if one exists.
 fn get_block_quote_annotation(node: &Node) -> HowserResult<MatchType> {
-    if let Some(paragraph) = node.capabilities
-        .traverse
-        .as_ref()
-        .ok_or(HowserError::CapabilityError)?
-        .first_child()?
-    {
-        if paragraph
-            .capabilities
-            .get
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?
-            .get_type()? == NodeType::CMarkNodeParagraph
-        {
-            get_paragraph_annotation(&paragraph)
-        } else {
-            Ok(MatchType::None)
-        }
+    if let Some(paragraph_node @ Node::Paragraph(_)) = node.first_child()? {
+        get_paragraph_annotation(&paragraph_node)
     } else {
         Ok(MatchType::None)
     }
 }
 
 /// Strips the block-level annotation from a block quote node if one exists.
-fn remove_block_quote_annotation(node: &Node) -> HowserResult<()> {
-    if let Some(paragraph) = node.capabilities
-        .traverse
-        .as_ref()
-        .ok_or(HowserError::CapabilityError)?
-        .first_child()?
-    {
-        if paragraph
-            .capabilities
-            .get
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?
-            .get_type()? == NodeType::CMarkNodeParagraph
-        {
-            remove_paragraph_annotation(&paragraph)?;
-            if paragraph
-                .capabilities
-                .traverse
-                .as_ref()
-                .ok_or(HowserError::CapabilityError)?
-                .first_child()?
-                .is_none()
-            {
-                paragraph
-                    .capabilities
-                    .mutate
-                    .as_ref()
-                    .ok_or(HowserError::CapabilityError)?
-                    .unlink();
-            }
+fn remove_block_quote_annotation(node: &mut Node) -> HowserResult<()> {
+    if let Some(Node::Paragraph(_)) = node.first_child()? {
+        remove_paragraph_annotation(node)?;
+        if node.first_child()?.is_none() {
+            node.unlink();
         }
     }
 
@@ -678,13 +397,8 @@ fn remove_block_quote_annotation(node: &Node) -> HowserResult<()> {
 
 /// Returns the annotation of a code block node if one exists.
 fn get_code_block_annotation(node: &Node) -> HowserResult<MatchType> {
-    let info = node.capabilities
-        .get
-        .as_ref()
-        .ok_or(HowserError::CapabilityError)?
-        .get_fence_info()?;
-    let (match_type, _) = extract_match_type(&info)?;
-    if match_type != MatchType::None {
+    if let Node::CodeBlock(code_block) = node {
+        let (match_type, _) = extract_match_type(&code_block.get_fence_info()?)?;
         Ok(match_type)
     } else {
         Ok(MatchType::None)
@@ -692,89 +406,47 @@ fn get_code_block_annotation(node: &Node) -> HowserResult<MatchType> {
 }
 
 /// Strips the annotation from a code block node if one exists.
-fn remove_code_block_annotation(node: &Node) -> HowserResult<()> {
-    let info = node.capabilities
-        .get
-        .as_ref()
-        .ok_or(HowserError::CapabilityError)?
-        .get_fence_info()?;
-    let (match_type, content) = extract_match_type(&info)?;
-    if match_type != MatchType::None {
-        node.capabilities
-            .set
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?
-            .set_fence_info(&content)?;
+fn remove_code_block_annotation(node: &mut Node) -> HowserResult<()> {
+    if let Node::CodeBlock(ref mut code_block) = node {
+        let (match_type, content) = extract_match_type(&code_block.get_fence_info()?)?;
+        if match_type != MatchType::None {
+            code_block.set_fence_info(&content)?;
+        }
     }
 
     Ok(())
 }
 
 /// Returns the block-level annotation of a heading node if one exists.
-fn get_heading_annotation(node: &Node) -> HowserResult<MatchType> {
-    if let Some(text) = node.capabilities
-        .traverse
-        .as_ref()
-        .ok_or(HowserError::CapabilityError)?
-        .first_child()?
-    {
-        if text.capabilities
-            .traverse
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?
-            .next_sibling()?
-            .is_none()
-        {
-            let getter = text.capabilities
-                .get
-                .as_ref()
-                .ok_or(HowserError::CapabilityError)?;
-            if getter.get_type()? == NodeType::CMarkNodeText {
-                let (match_type, content) = extract_match_type(&getter.get_content()?)?;
-                if match_type != MatchType::None && content.is_empty() {
-                    Ok(match_type)
-                } else {
-                    Ok(MatchType::None)
-                }
-            } else {
-                Ok(MatchType::None)
-            }
-        } else {
-            Ok(MatchType::None)
-        }
-    } else {
-        Ok(MatchType::None)
+fn get_heading_annotation(heading_node: &Node) -> HowserResult<MatchType> {
+    let text_node = match heading_node.first_child()? {
+        Some(node) => node,
+        None => return Ok(MatchType::None)
+    };
+    if text_node.next_sibling()?.is_some() {
+        return Ok(MatchType::None);
     }
+    if let Node::Text(ref text) = text_node {
+        let (match_type, content) = extract_match_type(&text.get_content()?)?;
+        if match_type != MatchType::None && content.is_empty() {
+            return Ok(match_type);
+        }
+    }
+
+    Ok(MatchType::None)
 }
 
 /// Strips the block-level annotation from a heading node if one exists.
-fn remove_heading_annotation(node: &Node) -> HowserResult<()> {
-    if let Some(text) = node.capabilities
-        .traverse
-        .as_ref()
-        .ok_or(HowserError::CapabilityError)?
-        .first_child()?
-    {
-        if text.capabilities
-            .traverse
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?
-            .next_sibling()?
-            .is_none()
-        {
-            let getter = text.capabilities
-                .get
-                .as_ref()
-                .ok_or(HowserError::CapabilityError)?;
-            if getter.get_type()? == NodeType::CMarkNodeText {
-                let (match_type, content) = extract_match_type(&getter.get_content()?)?;
-                if match_type != MatchType::None && content.is_empty() {
-                    text.capabilities
-                        .mutate
-                        .as_ref()
-                        .ok_or(HowserError::CapabilityError)?
-                        .unlink();
-                }
+fn remove_heading_annotation(heading_node: &Node) -> HowserResult<()> {
+    if let Some(mut text_node @ Node::Text(_)) = heading_node.first_child()? {
+        let match_result = match text_node {
+            Node::Text(ref text) => extract_match_type(&text.get_content()?)?,
+            _ => (MatchType::None, String::new()),
+        };
+        if text_node.next_sibling()?.is_none() {
+            let (match_type, content) = match_result;
+            if match_type != MatchType::None && content.is_empty() {
+                text_node.unlink();
             }
         }
     }
@@ -783,54 +455,21 @@ fn remove_heading_annotation(node: &Node) -> HowserResult<()> {
 }
 
 /// Returns the block-level annotation from a list item node if one exists.
-fn get_item_annotation(node: &Node) -> HowserResult<MatchType> {
-    if let Some(paragraph) = node.capabilities
-        .traverse
-        .as_ref()
-        .ok_or(HowserError::CapabilityError)?
-        .first_child()?
-    {
-        if paragraph
-            .capabilities
-            .get
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?
-            .get_type()? == NodeType::CMarkNodeParagraph
-        {
-            get_paragraph_annotation(&paragraph)
-        } else {
-            Ok(MatchType::None)
-        }
+fn get_item_annotation(item_node: &Node) -> HowserResult<MatchType> {
+    if let Some(paragraph_node @ Node::Paragraph(_)) = item_node.first_child()? {
+        get_paragraph_annotation(&paragraph_node)
     } else {
         Ok(MatchType::None)
     }
 }
 
 /// Strips the block-level annotation from a list item node if one exists.
-fn remove_item_annotation(node: &Node) -> HowserResult<()> {
-    if let Some(paragraph) = node.capabilities
-        .traverse
-        .as_ref()
-        .ok_or(HowserError::CapabilityError)?
-        .first_child()?
-    {
-        if paragraph
-            .capabilities
-            .get
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?
-            .get_type()? == NodeType::CMarkNodeParagraph
-        {
-            let token = get_paragraph_annotation(&paragraph)?;
-            if token != MatchType::None {
-                remove_paragraph_annotation(&paragraph)?;
-                paragraph
-                    .capabilities
-                    .mutate
-                    .as_ref()
-                    .ok_or(HowserError::CapabilityError)?
-                    .unlink();
-            }
+fn remove_item_annotation(item_node: &Node) -> HowserResult<()> {
+    if let Some(mut paragraph_node @ Node::Paragraph(_)) = item_node.first_child()? {
+        let token = get_paragraph_annotation(&paragraph_node)?;
+        if token != MatchType::None {
+            remove_paragraph_annotation(&mut paragraph_node)?;
+            paragraph_node.unlink();
         }
     }
 
@@ -843,23 +482,14 @@ fn remove_item_annotation(node: &Node) -> HowserResult<()> {
 /// This is necessary because lists nodes are meta-nodes in cmark and will only appear as containers
 /// for list items if they are present.
 fn annotate_circumstantial_node(target_node: &Node, document: &Document) -> HowserResult<()> {
-    document.set_match_type(target_node, MatchType::Optional)?;
-    let traverser = target_node
-        .capabilities
-        .traverse
-        .as_ref()
-        .ok_or(HowserError::CapabilityError)?;
-    let mut child = traverser.first_child()?;
+    document.set_match_type(target_node, MatchType::Optional);
+    let mut child = target_node.first_child()?;
     while let Some(node) = child {
         if document.get_match_type(&node)? == MatchType::Mandatory {
-            document.set_match_type(&target_node, MatchType::Mandatory)?;
+            document.set_match_type(&target_node, MatchType::Mandatory);
             return Ok(());
         } else {
-            let traverser = node.capabilities
-                .traverse
-                .as_ref()
-                .ok_or(HowserError::CapabilityError)?;
-            child = traverser.next_sibling()?;
+            child = node.next_sibling()?;
         }
     }
 
@@ -896,24 +526,10 @@ fn extract_match_type(content: &String) -> HowserResult<(MatchType, String)> {
 
 /// Strips all html from the document.
 fn strip_comments(root: &Node) -> HowserResult<()> {
-    for (node, _) in root.capabilities
-        .traverse
-        .as_ref()
-        .ok_or(HowserError::CapabilityError)?
-        .iter()
-    {
-        match node.capabilities
-            .get
-            .as_ref()
-            .ok_or(HowserError::CapabilityError)?
-            .get_type()?
-        {
-            NodeType::CMarkNodeHtmlInline | NodeType::CMarkNodeHtmlBlock => {
-                node.capabilities
-                    .mutate
-                    .as_ref()
-                    .ok_or(HowserError::CapabilityError)?
-                    .unlink();
+    for (mut node, _) in root.iter() {
+        match node {
+            Node::HtmlInline(_) | Node::HtmlBlock(_) => {
+                node.unlink();
             }
             _ => (),
         }
@@ -922,12 +538,91 @@ fn strip_comments(root: &Node) -> HowserResult<()> {
     Ok(())
 }
 
+/// Abstraction of the different types of block level Rx Elements and their match context.
+///
+/// These are used to parse block level annotations. Integrated types are elements whose annotations
+/// appear within the same node as the content while discrete types represent elements whose
+/// annotation occurs in an adjacent element.
+#[derive(Debug)]
+enum LookaheadType {
+    /// Integrated element with no annotation.
+    IntegratedLiteral(Node),
+    /// Integrated element with annotation and content.
+    IntegratedOccupied(Node, MatchType),
+    /// Integrated element with annotation, but no content.
+    IntegratedVacant(Node, MatchType),
+    /// Discrete element that is an annotation.
+    DiscreteAnnotated(Node, MatchType),
+    /// Discrete element that is content.
+    DiscreteLiteral(Node),
+    /// Any element that has a ditto annotation.
+    Ditto(Node),
+    /// Just list elements.
+    List(Node),
+    /// Elements that do not support annotation or no element.
+    Other(Option<Node>),
+}
+
+impl LookaheadType {
+    /// Returns a `LookaheadType` that is parsed from the given `Node`.
+    fn new(node: Option<Node>) -> HowserResult<Self> {
+        trace!("LookaheadType::new");
+        if let Some(node) = node {
+            let match_type = get_annotation(&node)?;
+            debug!("LookaheadType::new: MatchType: {:?}", match_type);
+            match node {
+                // List
+                Node::List(_) => Ok(LookaheadType::List(node)),
+                // Integrated
+                Node::Paragraph(_) | Node::BlockQuote(_) | Node::CodeBlock(_) => match match_type {
+                    MatchType::Repeatable => Ok(LookaheadType::Ditto(node)),
+                    MatchType::None => Ok(LookaheadType::IntegratedLiteral(node)),
+                    _ => {
+                        if LookaheadType::is_vacant(&node)? {
+                            Ok(LookaheadType::IntegratedVacant(node, match_type))
+                        } else {
+                            Ok(LookaheadType::IntegratedOccupied(node, match_type))
+                        }
+                    }
+                },
+                // Discrete
+                Node::Heading(_) | Node::Item(_) => match match_type {
+                    MatchType::Repeatable => Ok(LookaheadType::Ditto(node)),
+                    MatchType::None => Ok(LookaheadType::DiscreteLiteral(node)),
+                    _ => Ok(LookaheadType::DiscreteAnnotated(node, match_type)),
+                },
+                // Other
+                _ => Ok(LookaheadType::Other(Some(node))),
+            }
+        } else {
+            Ok(LookaheadType::Other(None))
+        }
+    }
+
+    /// Determines whether the given integrated node has content other than its annotation.
+    fn is_vacant(node: &Node) -> HowserResult<bool> {
+        match node {
+            Node::CodeBlock(ref code_block) => Ok(code_block.get_content()?.is_empty()),
+            _ => {
+                if let Some(annotation) = node.first_child()? {
+                    Ok(annotation.next_sibling()?.is_none())
+                } else {
+                    Err(HowserError::RuntimeError(
+                        "Lookahead Error: Got a match type, but no annotation node was present."
+                            .to_string(),
+                    ))
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::process_child_block_elements;
     use super::Document;
     use data::{MatchType, PromptToken};
-    use doogie::parse_document;
+    use doogie::{parse_document, Node};
     use helpers::test::strategies::cmark::arb_paragraph_match;
     use helpers::test::strategies::helpers::serialize_match_seq;
     use proptest::prelude::*;
@@ -947,16 +642,16 @@ mod tests {
 
             process_child_block_elements(&document.root, &document).unwrap();
 
-            if let Some(paragraph) = document.root.capabilities.traverse.as_ref().unwrap().first_child().unwrap() {
-                let match_type = document.get_match_type(&paragraph).unwrap();
+            if let Some(paragraph_node) = document.root.first_child().unwrap() {
+                let match_type = document.get_match_type(&paragraph_node).unwrap();
                 match prompt {
                     PromptToken::Mandatory => assert_eq!(match_type, MatchType::Mandatory),
                     PromptToken::Optional => assert_eq!(match_type, MatchType::Optional),
                     _ => ()
                 }
-                assert!(! document.is_wildcard(&paragraph).unwrap());
-                if let Some(text) = paragraph.capabilities.traverse.as_ref().unwrap().first_child().unwrap() {
-                    let processed_content = text.capabilities.get.as_ref().unwrap().get_content().unwrap();
+                assert!(! document.is_wildcard(&paragraph_node));
+                if let Some(Node::Text(ref text)) = paragraph_node.first_child().unwrap() {
+                    let processed_content = text.get_content().unwrap();
                     assert_eq!(processed_content, template_content);
                 } else {
                     panic!("No text node found");
@@ -970,19 +665,19 @@ mod tests {
         fn test_wildcard_paragraphs_are_processed(ref prompt in prop_oneof![Just(PromptToken::Mandatory),Just(PromptToken::Optional)]) {
             let template_content = prompt.to_string();
             let root = parse_document(&template_content);
-            let document = Document::new(&root, None)?;
+            let document = Document::new(&root, None).unwrap();
 
             process_child_block_elements(&document.root, &document).unwrap();
 
-            if let Some(paragraph) = document.root.capabilities.traverse.as_ref().unwrap().first_child().unwrap() {
+            if let Some(paragraph @ Node::Paragraph(_)) = document.root.first_child().unwrap() {
                 let match_type = document.get_match_type(&paragraph).unwrap();
                 match prompt {
                     PromptToken::Mandatory => assert_eq!(match_type, MatchType::Mandatory),
                     PromptToken::Optional => assert_eq!(match_type, MatchType::Optional),
                     _ => ()
                 }
-                assert!(document.is_wildcard(&paragraph).unwrap());
-                assert!(paragraph.capabilities.traverse.as_ref().unwrap().first_child().unwrap().is_none());
+                assert!(document.is_wildcard(&paragraph));
+                assert!(paragraph.first_child().unwrap().is_none());
             } else {
                 panic!("No paragraph node found");
             }
@@ -996,11 +691,11 @@ mod tests {
 
             process_child_block_elements(&root, &document).unwrap();
 
-            if let Some(paragraph) = document.root.capabilities.traverse.as_ref().unwrap().first_child().unwrap() {
-                assert_eq!(document.get_match_type(&paragraph).unwrap(), MatchType::Mandatory);
-                assert!(! document.is_wildcard(&paragraph).unwrap());
-                if let Some(text) = paragraph.capabilities.traverse.as_ref().unwrap().first_child().unwrap() {
-                    let processed_content = text.capabilities.get.as_ref().unwrap().get_content().unwrap();
+            if let Some(paragraph_node) = document.root.first_child().unwrap() {
+                assert_eq!(document.get_match_type(&paragraph_node).unwrap(), MatchType::Mandatory);
+                assert!(! document.is_wildcard(&paragraph_node));
+                if let Some(Node::Text(ref text)) = paragraph_node.first_child().unwrap() {
+                    let processed_content = text.get_content().unwrap();
                     assert_eq!(processed_content, template_content);
                 } else {
                     panic!("No text node found");
@@ -1021,23 +716,18 @@ mod tests {
 
             process_child_block_elements(&root, &document).unwrap();
 
-            if let Some(paragraph) = document.root.capabilities.traverse.as_ref().unwrap().first_child().unwrap() {
+            if let Some(paragraph @ Node::Paragraph(_)) = document.root.first_child().expect("No Paragraph Node found") {
                 assert_eq!(document.get_match_type(&paragraph).unwrap(), MatchType::Mandatory);
-                assert!(! document.is_wildcard(&paragraph).unwrap());
-                let traverser = paragraph.capabilities.traverse.as_ref().unwrap();
-                if let Some(text) = traverser.first_child().unwrap() {
-                    let processed_content = text.capabilities.get.as_ref().unwrap().get_content().unwrap();
+                assert!(! document.is_wildcard(&paragraph));
+
+                if let Some(Node::Text(ref text)) = paragraph.first_child().expect("No Text Node found") {
+                    let processed_content = text.get_content().unwrap();
                     assert_eq!(processed_content, template_content);
-                } else {
-                    panic!("No text node found");
                 }
-                if let Some(ditto) = traverser.next_sibling().unwrap() {
-                    assert_eq!(document.get_match_type(&ditto).unwrap(), MatchType::Repeatable);
-                } else {
-                    panic!("No Ditto Node found");
+
+                if let Some(ditto_node @ Node::Paragraph(_)) = paragraph.first_child().unwrap().unwrap().next_sibling().expect("No ditto node found") {
+                    assert_eq!(document.get_match_type(&ditto_node).unwrap(), MatchType::Repeatable);
                 }
-            } else {
-                panic!("No paragraph node found");
             }
         }
     }
