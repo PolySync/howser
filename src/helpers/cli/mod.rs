@@ -1,8 +1,3 @@
-extern crate termion;
-
-use self::termion::color;
-use self::termion::style;
-
 pub enum ShellText {
     Literal(String),
     WarningColor(Box<ShellText>),
@@ -41,20 +36,17 @@ impl ShellText {
     }
 }
 
-pub fn as_code_lines(code: &str, start_line: usize) -> Vec<String> {
+pub fn as_code_lines(code: &str, start_line: u32) -> Vec<String> {
     code.lines()
         .map(|line| {
-            format!(
-                "{}{}{}",
-                color::Fg(color::LightBlue),
-                line,
-                color::Fg(color::Reset)
-            )
+            ShellText::CodeColor(Box::new(ShellText::Literal(line.to_string()))).to_string()
         })
         .enumerate()
         .map(|(i, line)| {
-            let line_num = format!("{}{:<4}{}", style::Faint, i + start_line, style::Reset);
-            format!("{}{}", line_num, line)
+            let line_num = ShellText::Dim(Box::new(ShellText::Literal(
+                format!("{}    ", i as u32 + start_line)[..4].to_string(),
+            )));
+            format!("{} {}", line_num.to_string(), line)
         })
         .collect()
 }

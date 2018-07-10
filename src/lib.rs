@@ -14,10 +14,11 @@ extern crate log;
 
 extern crate doogie;
 
-pub mod constants;
-pub mod data;
 pub mod document;
+pub mod data;
 pub mod errors;
-pub mod helpers;
-pub mod reporters;
+pub mod constants;
 pub mod validator;
+pub mod reporters;
+pub mod helpers;
+pub mod checker;

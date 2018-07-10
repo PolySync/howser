@@ -1,24 +1,19 @@
 [package]
 name = "howser"
-version = "0.2.0"
+version = "0.1.0"
 authors = ["Devin Smith <dsmith@polysync.io>"]
 
 [dependencies]
 num = "0.1.41"
 clap = "~2.29"
 unicode-segmentation = "1.2.0"
-doogie = { git="https://github.com/PolySync/doogie", tag = "1.0.0" }
+doogie = { git="https://github.com/PolySync/doogie" }
 regex = "0.2"
-env_logger = "0.5.10"
+env_logger = "0.5.9"
 log = "0.4.1"
-termion = "1"
-toml = "0.4"
 
 [dev-dependencies]
 proptest = "0.3.3"
-tempfile = "3.0.2"
-assert_cli = "0.6.1"
-serde = "1.0"
 
 [[bin]]
 name = "howser"

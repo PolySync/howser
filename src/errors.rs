@@ -1,58 +1,49 @@
 //! Errors and Result Types for validation, reporting, and runtime issues.
 
 extern crate regex;
-extern crate termion;
-extern crate toml;
 
-use self::regex::Error as RegexError;
-use self::termion::color;
-use self::termion::style;
-use self::toml::de::Error as TomlError;
-use data::ContentMatchPair;
-use document::{Document, Prescription};
-use doogie::errors::DoogieError;
-use doogie::Node;
-use helpers::cli;
 use helpers::cli::ShellText;
+use helpers::cli;
+use self::regex::Error as RegexError;
 use std::error;
 use std::fmt;
 use std::io::Error as IOError;
+use doogie::errors::DoogieError;
+use doogie::Node;
+use document::{Document, Prescription};
+use std::ops::Add;
+use data::{ContentMatchPair, PromptToken};
 
 /// Crate-wide Result type.
 pub type HowserResult<T> = Result<T, HowserError>;
-/// Type alias for `Reportable` trait object
-pub type ValidationProblem = Box<Reportable>;
+/// Convenience alias for validation reporting.
+pub type ValidationProblems = Option<Vec<Box<Reportable>>>;
 
 /// Error types for use with `HowserResult`.
 #[derive(Debug)]
 pub enum HowserError {
-    DoogieError(DoogieError),
+    /// Wrapper for errors originating from the `remarkable` crate.
+    RemarkableError(DoogieError),
     IOError(IOError),
     Usage(String),
     RuntimeError(String),
+    /// For handling instances where a `Node` does not have the required capabilities.
     CapabilityError,
     RegexError(RegexError),
-    PrescriptionError(SpecWarning),
-    TomlError(TomlError),
+    PrescriptionError,
 }
 
 impl error::Error for HowserError {
     fn description(&self) -> &str {
         match self {
             &HowserError::Usage(ref message) => message.as_str(),
-            &HowserError::DoogieError(ref error) => error.description(),
-            &HowserError::IOError(ref error) => error.description(),
-            &HowserError::RuntimeError(ref message) => message,
-            &HowserError::CapabilityError => "Capability Error",
-            &HowserError::RegexError(ref error) => error.description(),
-            &HowserError::PrescriptionError(_) => "Prescription Error",
-            &HowserError::TomlError(_) => "TomlError",
+            _ => "General Error",
         }
     }
 
     fn cause(&self) -> Option<&error::Error> {
         match self {
-            &HowserError::DoogieError(ref error) => Some(error),
+            &HowserError::RemarkableError(ref error) => Some(error),
             &HowserError::IOError(ref error) => Some(error),
             &HowserError::RegexError(ref error) => Some(error),
             _ => None,
@@ -74,7 +65,7 @@ impl From<IOError> for HowserError {
 
 impl From<DoogieError> for HowserError {
     fn from(err: DoogieError) -> Self {
-        HowserError::DoogieError(err)
+        HowserError::RemarkableError(err)
     }
 }
 
@@ -84,13 +75,78 @@ impl From<RegexError> for HowserError {
     }
 }
 
-/// Trait for aggregating validation problems.
-impl From<TomlError> for HowserError {
-    fn from(err: TomlError) -> Self {
-        HowserError::TomlError(err)
+/// Errors and warnings collected during the validation process.
+pub struct ValidationReport {
+    pub errors: ValidationProblems,
+    pub warnings: ValidationProblems,
+}
+
+impl ValidationReport {
+    pub fn new(errors: ValidationProblems, warnings: ValidationProblems) -> Self {
+        ValidationReport { errors, warnings }
     }
 }
 
+impl Add for ValidationReport {
+    type Output = Self;
+
+    fn add(self, other: ValidationReport) -> Self {
+        let mut aggregated_errors = Vec::new();
+        let mut aggregated_warnings = Vec::new();
+
+        if let Some(mut errors) = self.errors {
+            aggregated_errors.append(&mut errors);
+        }
+        if let Some(mut errors) = other.errors {
+            aggregated_errors.append(&mut errors);
+        }
+        if let Some(mut warnings) = self.warnings {
+            aggregated_warnings.append(&mut warnings);
+        }
+        if let Some(mut warnings) = other.warnings {
+            aggregated_warnings.append(&mut warnings);
+        }
+
+        ValidationReport {
+            errors: match aggregated_errors.is_empty() {
+                true => None,
+                false => Some(aggregated_errors),
+            },
+            warnings: match aggregated_warnings.is_empty() {
+                true => None,
+                false => Some(aggregated_warnings),
+            },
+        }
+    }
+}
+
+/// Final result of the validation process.
+///
+/// Contains the final verdict on validity along with the reportable info.
+pub struct ValidationResult {
+    report: ValidationReport,
+    valid: bool,
+}
+
+impl ValidationResult {
+    pub fn new(report: ValidationReport, valid: bool) -> ValidationResult {
+        ValidationResult { report, valid }
+    }
+
+    pub fn get_warnings<'a>(&'a self) -> &'a ValidationProblems {
+        &self.report.warnings
+    }
+
+    pub fn get_errors<'a>(&'a self) -> &'a ValidationProblems {
+        &self.report.errors
+    }
+
+    pub fn is_valid(&self) -> bool {
+        self.valid
+    }
+}
+
+/// Trait for reporting validation problems.
 pub trait Reportable {
     /// Report in standard single line format.
     fn short_msg(&self) -> String;
@@ -103,17 +159,21 @@ pub trait Reportable {
 }
 
 /// A warning related to `Prescription` specification compliance issues.
-#[derive(Debug)]
 pub struct SpecWarning {
-    line: usize,
+    line: u32,
     file: String,
     message: String,
 }
 
 impl SpecWarning {
-    pub fn new(node: &Node, rx: &Document, message: &str) -> HowserResult<Self> {
-        let line = Document::get_line_num(&node)?;
-        let file = match rx.filename.as_ref() {
+    pub fn new(node: &Node, rx: &Prescription, message: &str) -> HowserResult<Self> {
+        let getter = node.capabilities
+            .get
+            .as_ref()
+            .ok_or(HowserError::CapabilityError)?;
+
+        let line = getter.get_start_line()?;
+        let file = match rx.document.filename.as_ref() {
             Some(filename) => filename.clone(),
             None => String::new(),
         };
@@ -124,20 +184,23 @@ impl SpecWarning {
             message: message.to_string(),
         })
     }
-
-    fn type_string() -> String {
-        error_type("Rx Specification Error")
-    }
 }
 
 impl Reportable for SpecWarning {
     fn short_msg(&self) -> String {
-        let file_info = file_info(&self.file, self.line);
+        let error_type = ShellText::WarningColor(Box::new(ShellText::Literal(
+            "SpecWarning".to_string(),
+        ))).to_string();
+        let file_info = format!(
+            "{} line {}",
+            ShellText::Underlined(Box::new(ShellText::Literal(self.file.clone()))).to_string(),
+            self.line
+        );
         let message = format!(
             " :: {}",
             ShellText::MessageColor(Box::new(ShellText::Literal(self.message.clone()))).to_string()
         );
-        format!("{} :: {}{}", Self::type_string(), file_info, message)
+        format!("{} :: {}{}", error_type, file_info, message)
     }
 
     fn long_msg(&self) -> String {
@@ -151,8 +214,13 @@ impl Reportable for SpecWarning {
 
 /// General `Document` validity error.
 pub struct DocumentError {
-    info: ErrorInfo,
+    document_line: u32,
+    rx_line: u32,
+    document_snippet: String,
+    rx_snippet: String,
     message: String,
+    document_file: String,
+    rx_file: String,
 }
 
 impl DocumentError {
@@ -163,52 +231,104 @@ impl DocumentError {
         rx: &Prescription,
         message: String,
     ) -> HowserResult<Self> {
+        let doc_node_getter = doc_node
+            .capabilities
+            .get
+            .as_ref()
+            .ok_or(HowserError::CapabilityError)?;
+        let doc_node_renderer = doc_node
+            .capabilities
+            .render
+            .as_ref()
+            .ok_or(HowserError::CapabilityError)?;
+
+        let _rx_getter = rx_node
+            .capabilities
+            .get
+            .as_ref()
+            .ok_or(HowserError::CapabilityError)?;
+        let _rx_renderer = rx_node
+            .capabilities
+            .render
+            .as_ref()
+            .ok_or(HowserError::CapabilityError)?;
+
+        let document_line = doc_node_getter.get_start_line()?;
+        let rx_line = doc_node_getter.get_start_line()?;
+        let document_file = document
+            .filename
+            .as_ref()
+            .unwrap_or(&String::new())
+            .to_string();
+        let rx_file = rx.document
+            .filename
+            .as_ref()
+            .unwrap_or(&String::new())
+            .to_string();
+        let document_snippet = doc_node_renderer.render_commonmark();
+        let rx_snippet = _rx_renderer.render_commonmark();
+
         Ok(DocumentError {
-            info: ErrorInfo::new(rx_node, doc_node, rx, document)?,
+            document_line,
+            rx_line,
+            document_snippet,
+            rx_snippet,
             message,
+            document_file,
+            rx_file,
         })
-    }
-
-    fn type_string() -> String {
-        error_type("Document Error")
-    }
-
-    fn message(&self) -> String {
-        let message_text = match self.message.is_empty() {
-            true => self.message.clone(),
-            false => format!(" :: {}", self.message),
-        };
-        format!(
-            "{}{}{}",
-            color::Fg(color::Yellow),
-            message_text,
-            color::Fg(color::Reset)
-        )
     }
 }
 
 impl Reportable for DocumentError {
     fn short_msg(&self) -> String {
+        let error_type =
+            ShellText::ErrorColor(Box::new(ShellText::Literal("Document Error".to_string())));
+        let rx_info = ShellText::Underlined(Box::new(ShellText::Literal(format!(
+            "{} line {}",
+            self.rx_file, self.rx_line
+        ))));
+        let document_info = ShellText::Underlined(Box::new(ShellText::Literal(format!(
+            "{} line {}",
+            self.document_file, self.document_line
+        ))));
+        let message_text = match self.message.is_empty() {
+            true => self.message.clone(),
+            false => format!(" :: {}", self.message),
+        };
+        let message = ShellText::MessageColor(Box::new(ShellText::Literal(message_text)));
         format!(
-            "{}: {} {} {}",
-            Self::type_string(),
-            self.info.rx_location(),
-            self.info.node_location(),
-            self.message()
+            "{} :: {}, {}{}",
+            error_type.to_string(),
+            rx_info.to_string(),
+            document_info.to_string(),
+            message.to_string()
         )
     }
 
     fn long_msg(&self) -> String {
-        let mut message = String::from(self.message());
-        message += "\n\n";
-        message += &self.info.rx_location();
-        message += "\n";
-        message += &self.info.rx_snippet();
-        message += "\n\n";
-        message += &self.info.node_location();
-        message += "\n";
-        message += &self.info.node_snippet();
-        message
+        let mut message_lines = vec![self.short_msg()];
+
+        let mut snippet_lines = vec![
+            ShellText::Underlined(Box::new(ShellText::Literal(self.rx_file.to_owned())))
+                .to_string(),
+        ];
+        snippet_lines.append(&mut cli::as_code_lines(&self.rx_snippet, self.rx_line));
+        message_lines.append(&mut cli::indented_lines(&snippet_lines, 4));
+
+        message_lines.push(String::new());
+
+        let mut snippet_lines = vec![
+            ShellText::Underlined(Box::new(ShellText::Literal(self.document_file.to_owned())))
+                .to_string(),
+        ];
+        snippet_lines.append(&mut cli::as_code_lines(
+            &self.document_snippet,
+            self.document_line,
+        ));
+        message_lines.append(&mut cli::indented_lines(&snippet_lines, 4));
+
+        message_lines.join("\n")
     }
 
     fn code(&self) -> u32 {
@@ -216,209 +336,134 @@ impl Reportable for DocumentError {
     }
 }
 
-struct ErrorInfo {
-    pub node_file: String,
-    pub node_line: usize,
-    pub node_type: String,
-    pub node_snippet: String,
-    pub rx_file: String,
-    pub rx_line: usize,
-    pub rx_type: String,
-    pub rx_snippet: String,
+/// Error with `Node` content validity.
+pub struct ContentError {
+    rx_file: String,
+    rx_line: u32,
+    document_file: String,
+    document_line: u32,
+    match_pairs: Vec<ContentMatchPair>,
 }
 
-impl ErrorInfo {
-    fn new(
-        rx_node: &Node,
-        doc_node: &Node,
-        rx: &Prescription,
-        doc: &Document,
-    ) -> HowserResult<Self> {
-        let node_file = doc.filename
-            .as_ref()
-            .unwrap_or(&"Unknown".to_string())
-            .to_string();
-        let node_line = Document::get_line_num(doc_node)?;
-        let node_type = doc_node.get_cmark_type_string()?;
-        let node_snippet = doc_node.render_commonmark();
-        let rx_file = rx.document
-            .filename
-            .as_ref()
-            .unwrap_or(&"Unknown".to_string())
-            .clone();
-        let rx_line = Document::get_line_num(rx_node)?;
-        let rx_type = rx_node.get_cmark_type_string()?;
-        let rx_snippet = rx_node.render_commonmark();
-
-        Ok(ErrorInfo {
-            node_file,
-            node_line,
-            node_type,
-            node_snippet,
-            rx_file,
-            rx_line,
-            rx_type,
-            rx_snippet,
-        })
-    }
-
-    fn rx_location(&self) -> String {
-        file_info(&self.rx_file, self.rx_line)
-    }
-
-    fn node_location(&self) -> String {
-        file_info(&self.node_file, self.node_line)
-    }
-
-    fn rx_type(&self) -> String {
-        node_type_string(&self.rx_type)
-    }
-
-    fn node_type(&self) -> String {
-        node_type_string(&self.node_type)
-    }
-
-    fn rx_snippet(&self) -> String {
-        cli::as_code_lines(&self.rx_snippet, self.rx_line).join("\n")
-    }
-
-    fn node_snippet(&self) -> String {
-        cli::as_code_lines(&self.node_snippet, self.node_line).join("\n")
-    }
-}
-
-/// Error resulting from disparate Node types
-pub struct TypeMismatchError {
-    info: ErrorInfo,
-}
-
-impl TypeMismatchError {
-    pub fn new(
-        rx_node: &Node,
-        doc_node: &Node,
-        rx: &Prescription,
-        doc: &Document,
-    ) -> HowserResult<Self> {
-        Ok(TypeMismatchError {
-            info: ErrorInfo::new(rx_node, doc_node, rx, doc)?,
-        })
-    }
-
-    fn type_string() -> String {
-        error_type("Type Mismatch Error")
-    }
-}
-
-impl Reportable for TypeMismatchError {
-    fn short_msg(&self) -> String {
-        format!(
-            "{}: {} from {} does not match {} from {}",
-            Self::type_string(),
-            self.info.rx_type(),
-            self.info.rx_location(),
-            self.info.node_type(),
-            self.info.node_location()
-        )
-    }
-
-    fn long_msg(&self) -> String {
-        let mut message = format!("{}\n\n", Self::type_string());
-        message += &self.info.rx_type();
-        message += "\n";
-        message += &self.info.rx_location();
-        message += "\n";
-        message += &self.info.rx_snippet();
-        message += "\n\n";
-        message += &self.info.node_type();
-        message += "\n";
-        message += &self.info.node_location();
-        message += "\n";
-        message += &self.info.node_snippet();
-        message
-    }
-
-    fn code(&self) -> u32 {
-        1
-    }
-}
-
-/// Error resulting from a textual content mismatch
-pub struct TextualContentError {
-    info: ErrorInfo,
-    rx_prompts: Vec<String>,
-    doc_matches: Vec<String>,
-}
-
-impl TextualContentError {
+impl ContentError {
     pub fn new(
         rx_node: &Node,
         doc_node: &Node,
         rx: &Prescription,
         document: &Document,
-        match_pairs: &Vec<ContentMatchPair>,
+        match_pairs: Vec<ContentMatchPair>,
     ) -> HowserResult<Self> {
-        let rx_prompts: Vec<String> = match_pairs
-            .iter()
-            .map(|pair| {
-                let ContentMatchPair(ref content, _) = pair;
-                match ContentMatchPair::is_match(pair) {
-                    true => ok_text(&content.to_string()),
-                    false => error_text(&content.to_string()),
-                }
-            })
-            .collect();
-        let doc_matches: Vec<String> = match_pairs
-            .iter()
-            .map(|pair| {
-                let content = match pair {
-                    ContentMatchPair(_, Some(ref content)) => content.to_owned(),
-                    _ => String::from("<No Match>"),
-                };
-                match ContentMatchPair::is_match(pair) {
-                    true => ok_text(&content),
-                    false => error_text(&content),
-                }
-            })
-            .collect();
+        let doc_node_getter = doc_node
+            .capabilities
+            .get
+            .as_ref()
+            .ok_or(HowserError::CapabilityError)?;
+        let _doc_node_renderer = doc_node
+            .capabilities
+            .render
+            .as_ref()
+            .ok_or(HowserError::CapabilityError)?;
 
-        Ok(TextualContentError {
-            info: ErrorInfo::new(rx_node, doc_node, rx, document)?,
-            rx_prompts,
-            doc_matches,
+        let _rx_node_getter = rx_node
+            .capabilities
+            .get
+            .as_ref()
+            .ok_or(HowserError::CapabilityError)?;
+        let _rx_node_renderer = rx_node
+            .capabilities
+            .render
+            .as_ref()
+            .ok_or(HowserError::CapabilityError)?;
+
+        let document_line = doc_node_getter.get_start_line()?;
+        let rx_line = doc_node_getter.get_start_line()?;
+        let document_file = document
+            .filename
+            .as_ref()
+            .unwrap_or(&String::new())
+            .to_string();
+        let rx_file = rx.document
+            .filename
+            .as_ref()
+            .unwrap_or(&String::new())
+            .to_string();
+
+        Ok(ContentError {
+            rx_file: rx_file,
+            rx_line: rx_line,
+            document_file,
+            document_line,
+            match_pairs,
         })
-    }
-
-    fn type_string() -> String {
-        error_type("Textual Content Error")
     }
 }
 
-impl Reportable for TextualContentError {
+impl Reportable for ContentError {
     fn short_msg(&self) -> String {
+        let error_type =
+            ShellText::ErrorColor(Box::new(ShellText::Literal("Content Error".to_string())));
+        let rx_info = ShellText::Underlined(Box::new(ShellText::Literal(format!(
+            "{} line {}",
+            self.rx_file, self.rx_line
+        ))));
+        let document_info = ShellText::Underlined(Box::new(ShellText::Literal(format!(
+            "{} line {}",
+            self.document_file, self.document_line
+        ))));
+        let mut message = String::new();
+
+        for pair in &self.match_pairs {
+            if !ContentMatchPair::is_match(&pair) {
+                message = match pair {
+                    &ContentMatchPair(PromptToken::Mandatory, None) => {
+                        ShellText::MessageColor(Box::new(ShellText::Literal(
+                            "No match found for Mandatory Prompt".to_string(),
+                        ))).to_string()
+                    }
+                    &ContentMatchPair(PromptToken::Literal(ref required), None) => {
+                        let required_content = ShellText::ErrorColor(Box::new(
+                            ShellText::Literal(required.clone()),
+                        )).to_string();
+                        format!(
+                            "The required literal content '{}' was missing.",
+                            required_content
+                        )
+                    }
+                    &ContentMatchPair(PromptToken::Literal(ref required), Some(ref found)) => {
+                        let required_content = ShellText::ErrorColor(Box::new(
+                            ShellText::Literal(required.clone()),
+                        )).to_string();
+                        let found_content = ShellText::ErrorColor(Box::new(ShellText::Literal(
+                            found.clone(),
+                        ))).to_string();
+                        format!(
+                            "The required literal content '{}' does not match '{}'",
+                            required_content, found_content
+                        )
+                    }
+                    &ContentMatchPair(PromptToken::None, Some(ref content)) => {
+                        let found_content = ShellText::ErrorColor(Box::new(ShellText::Literal(
+                            content.clone(),
+                        ))).to_string();
+                        format!("Superfluous content found: '{}'", found_content)
+                    }
+                    _ => "Content Mismatch".to_string(),
+                };
+                break;
+            }
+        }
+
         format!(
-            "{}: at {}, {}",
-            Self::type_string(),
-            self.info.rx_location(),
-            self.info.node_location()
+            "{} :: {}, {} :: {}",
+            error_type.to_string(),
+            rx_info.to_string(),
+            document_info.to_string(),
+            message
         )
     }
 
     fn long_msg(&self) -> String {
-        let mut message = format!("{}\n\n", Self::type_string());
-        message += &format!("{}Prescription : {}", style::Bold, style::Reset);
-        message += &self.rx_prompts.join("");
-        message += "\n";
-        message += &format!("{}Document : {}", style::Bold, style::Reset);
-        message += &self.doc_matches.join("");
-        message += "\n\n";
-        message += &self.info.rx_location();
-        message += "\n";
-        message += &self.info.rx_snippet();
-        message += "\n\n";
-        message += &self.info.node_location();
-        message += "\n";
-        message += &self.info.node_snippet();
-        message
+        self.short_msg()
     }
 
     fn code(&self) -> u32 {
@@ -426,43 +471,90 @@ impl Reportable for TextualContentError {
     }
 }
 
-fn error_type(error_type: &str) -> String {
-    format!(
-        "{}{}{}",
-        color::Fg(color::Red),
-        error_type,
-        color::Fg(color::Reset),
-    )
+/// Error with hyperlink validity.
+pub struct LinkError {
+    rx_file: String,
+    rx_line: u32,
+    document_file: String,
+    document_line: u32,
 }
 
-fn file_info(filename: &str, line: usize) -> String {
-    format!(
-        "{}{} line {}{}",
-        style::Underline,
-        filename,
-        line,
-        style::Reset
-    )
+impl LinkError {
+    pub fn new(
+        rx_node: &Node,
+        doc_node: &Node,
+        rx: &Prescription,
+        document: &Document,
+    ) -> HowserResult<Self> {
+        let _doc_node_getter = doc_node
+            .capabilities
+            .get
+            .as_ref()
+            .ok_or(HowserError::CapabilityError)?;
+        let _doc_node_renderer = doc_node
+            .capabilities
+            .render
+            .as_ref()
+            .ok_or(HowserError::CapabilityError)?;
+
+        let _rx_node_getter = rx_node
+            .capabilities
+            .get
+            .as_ref()
+            .ok_or(HowserError::CapabilityError)?;
+        let _rx_node_renderer = rx_node
+            .capabilities
+            .render
+            .as_ref()
+            .ok_or(HowserError::CapabilityError)?;
+
+        let document_line = _doc_node_getter.get_start_line()?;
+        let rx_line = _doc_node_getter.get_start_line()?;
+        let document_file = document
+            .filename
+            .as_ref()
+            .unwrap_or(&String::new())
+            .to_string();
+        let rx_file = rx.document
+            .filename
+            .as_ref()
+            .unwrap_or(&String::new())
+            .to_string();
+
+        Ok(LinkError {
+            rx_file,
+            rx_line,
+            document_file,
+            document_line,
+        })
+    }
 }
 
-fn node_type_string(node_type: &String) -> String {
-    format!("{}{}{}", style::Bold, node_type, style::Reset)
-}
+impl Reportable for LinkError {
+    fn short_msg(&self) -> String {
+        let error_type =
+            ShellText::ErrorColor(Box::new(ShellText::Literal("Link Error".to_string())));
+        let rx_info = ShellText::Underlined(Box::new(ShellText::Literal(format!(
+            "{} line {}",
+            self.rx_file, self.rx_line
+        ))));
+        let document_info = ShellText::Underlined(Box::new(ShellText::Literal(format!(
+            "{} line {}",
+            self.document_file, self.document_line
+        ))));
+        format!(
+            "{} :: {}, {}",
+            error_type.to_string(),
+            rx_info.to_string(),
+            document_info.to_string()
+        )
+    }
 
-fn ok_text(text: &str) -> String {
-    format!(
-        "{}{}{}",
-        color::Fg(color::Green),
-        text,
-        color::Fg(color::Reset)
-    )
-}
+    fn long_msg(&self) -> String {
+        self.short_msg()
+    }
 
-fn error_text(text: &str) -> String {
-    format!(
-        "{}{}{}",
-        color::Fg(color::Red),
-        text,
-        color::Fg(color::Reset)
-    )
+    fn code(&self) -> u32 {
+        1
+    }
 }

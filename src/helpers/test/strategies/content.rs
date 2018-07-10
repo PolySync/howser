@@ -1,6 +1,6 @@
-use data::Comment;
 use proptest::prelude::*;
 use std::ops::Range;
+use data::Comment;
 
 /// Some arbitrary CMark-compatible textual content.
 pub fn arb_content(words: Range<usize>) -> BoxedStrategy<String> {
@@ -21,10 +21,10 @@ prop_compose!{
 }
 
 pub mod prompts {
-    use super::arb_content;
-    use data::PromptToken;
     use proptest::prelude::*;
+    use super::arb_content;
     use std::ops::Range;
+    use data::PromptToken;
 
     const PROMPTS: &'static [PromptToken] = &[PromptToken::Mandatory, PromptToken::Optional];
 
@@ -107,9 +107,9 @@ pub mod prompts {
 }
 
 pub mod matches {
+    use proptest::prelude::*;
     use super::arb_content;
     use data::{ContentMatchPair, PromptToken};
-    use proptest::prelude::*;
     use std::ops::Range;
 
     /// Returns a vector of arbitrary ContentMatchPair.
@@ -177,8 +177,8 @@ pub mod matches {
 }
 
 pub mod mismatches {
-    use super::arb_content;
     use proptest::prelude::*;
+    use super::arb_content;
 
     pub fn mismatch_pair() -> BoxedStrategy<(Vec<String>, String)> {
         _mismatch_pair()
